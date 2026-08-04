@@ -1,5 +1,8 @@
+// ignore_for_file: deprecated_member_use
+
 import 'dart:html' as html;
 import 'package:flutter/material.dart';
+import 'pages/checkout_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -227,6 +230,28 @@ class _HomePageState extends State<HomePage> {
     return grouped;
   }
 
+  void _goToCheckout() {
+    if (cart.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Your cart is empty. Add items before checkout.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => CheckoutPage(
+          cart: Map<String, int>.from(cart),
+          products: products,
+          token: token,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isLoggedIn = token != null && token!.isNotEmpty;
@@ -241,6 +266,7 @@ class _HomePageState extends State<HomePage> {
           onMenuTap: () => _scrollToSection('menu'),
           onStoreTap: () => _scrollToSection('store'),
           onCartTap: () => _scrollToSection('cart'),
+          onCheckoutTap: _goToCheckout,
           onLogoutTap: _logout,
         ),
       ),
@@ -252,6 +278,7 @@ class _HomePageState extends State<HomePage> {
               cartItemCount: cartItemCount,
               onStartOrder: () => _scrollToSection('menu'),
               onSignIn: () => _scrollToSection('login'),
+              onCheckoutTap: _goToCheckout,
             ),
             SocialLoginSection(
               isLoggedIn: isLoggedIn,
@@ -276,6 +303,7 @@ class _HomePageState extends State<HomePage> {
               onIncreaseQty: increaseQty,
               onDecreaseQty: decreaseQty,
               onClearCart: clearCart,
+              onCheckoutTap: _goToCheckout,
             ),
             const OrderStepsSection(),
             const FooterSection(),
@@ -318,6 +346,7 @@ class TopBar extends StatelessWidget {
   final VoidCallback onStoreTap;
   final VoidCallback onLoginTap;
   final VoidCallback onCartTap;
+  final VoidCallback onCheckoutTap;
   final VoidCallback onLogoutTap;
 
   const TopBar({
@@ -328,6 +357,7 @@ class TopBar extends StatelessWidget {
     required this.onStoreTap,
     required this.onLoginTap,
     required this.onCartTap,
+    required this.onCheckoutTap,
     required this.onLogoutTap,
   });
 
@@ -364,6 +394,10 @@ class TopBar extends StatelessWidget {
         TextButton(
           onPressed: onStoreTap,
           child: const Text('Store'),
+        ),
+        TextButton(
+          onPressed: onCheckoutTap,
+          child: const Text('Checkout'),
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -422,6 +456,7 @@ class HeroSection extends StatelessWidget {
   final int cartItemCount;
   final VoidCallback onStartOrder;
   final VoidCallback onSignIn;
+  final VoidCallback onCheckoutTap;
 
   const HeroSection({
     super.key,
@@ -429,6 +464,7 @@ class HeroSection extends StatelessWidget {
     required this.cartItemCount,
     required this.onStartOrder,
     required this.onSignIn,
+    required this.onCheckoutTap,
   });
 
   @override
@@ -463,6 +499,7 @@ class HeroSection extends StatelessWidget {
                               cartItemCount: cartItemCount,
                               onStartOrder: onStartOrder,
                               onSignIn: onSignIn,
+                              onCheckoutTap: onCheckoutTap,
                             ),
                           ),
                           const SizedBox(width: 24),
@@ -480,6 +517,7 @@ class HeroSection extends StatelessWidget {
                             cartItemCount: cartItemCount,
                             onStartOrder: onStartOrder,
                             onSignIn: onSignIn,
+                            onCheckoutTap: onCheckoutTap,
                           ),
                           const SizedBox(height: 24),
                           const _HeroHighlightCard(),
@@ -499,12 +537,14 @@ class _HeroText extends StatelessWidget {
   final int cartItemCount;
   final VoidCallback onStartOrder;
   final VoidCallback onSignIn;
+  final VoidCallback onCheckoutTap;
 
   const _HeroText({
     required this.isLoggedIn,
     required this.cartItemCount,
     required this.onStartOrder,
     required this.onSignIn,
+    required this.onCheckoutTap,
   });
 
   @override
@@ -562,9 +602,9 @@ class _HeroText extends StatelessWidget {
               ),
             ),
             OutlinedButton.icon(
-              onPressed: isLoggedIn ? null : onSignIn,
-              icon: Icon(isLoggedIn ? Icons.verified_user : Icons.login),
-              label: Text(isLoggedIn ? 'Signed In' : 'Sign In'),
+              onPressed: isLoggedIn ? onCheckoutTap : onSignIn,
+              icon: Icon(isLoggedIn ? Icons.payment : Icons.login),
+              label: Text(isLoggedIn ? 'Go to Checkout' : 'Sign In'),
               style: OutlinedButton.styleFrom(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
@@ -1091,7 +1131,7 @@ class _CategoryProductGroup extends StatelessWidget {
                 return _ProductCard(
                   product: product,
                   qtyInCart: qty,
-                  onAddToCart: () => onAddToCart(product),
+                  onAddToCart: onAddToCart,
                 );
               },
             );
@@ -1105,7 +1145,7 @@ class _CategoryProductGroup extends StatelessWidget {
 class _ProductCard extends StatelessWidget {
   final Product product;
   final int qtyInCart;
-  final VoidCallback onAddToCart;
+  final void Function(Product product) onAddToCart;
 
   const _ProductCard({
     required this.product,
@@ -1187,7 +1227,7 @@ class _ProductCard extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             FilledButton.icon(
-              onPressed: product.isActive ? onAddToCart : null,
+              onPressed: product.isActive ? () => onAddToCart(product) : null,
               icon: const Icon(Icons.add_shopping_cart),
               label: const Text('Add'),
             ),
@@ -1206,6 +1246,7 @@ class CartSummarySection extends StatelessWidget {
   final void Function(String productId) onIncreaseQty;
   final void Function(String productId) onDecreaseQty;
   final VoidCallback onClearCart;
+  final VoidCallback onCheckoutTap;
 
   const CartSummarySection({
     super.key,
@@ -1216,6 +1257,7 @@ class CartSummarySection extends StatelessWidget {
     required this.onIncreaseQty,
     required this.onDecreaseQty,
     required this.onClearCart,
+    required this.onCheckoutTap,
   });
 
   @override
@@ -1364,9 +1406,9 @@ class CartSummarySection extends StatelessWidget {
                         label: const Text('Clear cart'),
                       ),
                       FilledButton.icon(
-                        onPressed: () {},
+                        onPressed: onCheckoutTap,
                         icon: const Icon(Icons.payment),
-                        label: const Text('Checkout later'),
+                        label: const Text('Checkout'),
                       ),
                     ],
                   ),
@@ -1421,7 +1463,8 @@ class OrderStepsSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return _SectionContainer(
       title: 'How ordering works',
-      subtitle: 'A simple flow for the next features you will connect after the first page.',
+      subtitle:
+          'A simple flow for the next features you will connect after the first page.',
       child: LayoutBuilder(
         builder: (context, constraints) {
           final isWide = constraints.maxWidth > 800;

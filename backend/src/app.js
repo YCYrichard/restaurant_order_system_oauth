@@ -18,3 +18,6 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`API running on http://localhost:${port}`);
 });
+
+const orderRoutes = require('./routes/orders.routes');
+app.use('/orders', orderRoutes);
