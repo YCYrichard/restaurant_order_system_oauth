@@ -1,0 +1,16 @@
+# Node
+backend/node_modules/
+backend/.env
+
+# Flutter
+frontend/flutter_web/.dart_tool/
+frontend/flutter_web/build/
+frontend/flutter_web/.idea/
+frontend/flutter_web/.flutter-plugins
+frontend/flutter_web/.flutter-plugins-dependencies
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
