@@ -72,13 +72,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
       _errorMessage = null;
     });
 
+    // In a real app, decode userId from token; using placeholder here.
     final userId = widget.token != null ? 1 : null;
+    // Store id 1 for now; later you can select actual store from UI.
     final storeId = 1;
 
     final items = widget.cart.entries.map((e) {
       final product = widget.products.firstWhere((p) => p.id == e.key);
       return {
-        'productId': product.id,
+        // IMPORTANT: use dbProductId to match MySQL products.id
+        'productId': product.dbProductId,
         'quantity': e.value,
         'price': product.price,
       };

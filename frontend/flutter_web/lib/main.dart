@@ -31,8 +31,10 @@ class MyApp extends StatelessWidget {
   }
 }
 
+/// Product model with both frontend id and MySQL dbProductId.
 class Product {
-  final String id;
+  final String id;        // frontend ID (e.g. "burger_1")
+  final int dbProductId;  // MySQL products.id
   final String name;
   final String category;
   final double price;
@@ -42,6 +44,7 @@ class Product {
 
   const Product({
     required this.id,
+    required this.dbProductId,
     required this.name,
     required this.category,
     required this.price,
@@ -65,6 +68,7 @@ class _HomePageState extends State<HomePage> {
   final List<Product> products = const [
     Product(
       id: 'burger_1',
+      dbProductId: 1,
       name: 'Classic Beef Burger',
       category: 'Burgers',
       price: 8.90,
@@ -73,6 +77,7 @@ class _HomePageState extends State<HomePage> {
     ),
     Product(
       id: 'burger_2',
+      dbProductId: 2,
       name: 'Spicy Chicken Burger',
       category: 'Burgers',
       price: 9.50,
@@ -81,6 +86,7 @@ class _HomePageState extends State<HomePage> {
     ),
     Product(
       id: 'drink_1',
+      dbProductId: 3,
       name: 'Fresh Lemon Tea',
       category: 'Drinks',
       price: 2.80,
@@ -89,6 +95,7 @@ class _HomePageState extends State<HomePage> {
     ),
     Product(
       id: 'drink_2',
+      dbProductId: 4,
       name: 'Iced Americano',
       category: 'Drinks',
       price: 3.20,
@@ -97,6 +104,7 @@ class _HomePageState extends State<HomePage> {
     ),
     Product(
       id: 'side_1',
+      dbProductId: 5,
       name: 'Crispy Fries',
       category: 'Sides',
       price: 3.60,
@@ -105,6 +113,7 @@ class _HomePageState extends State<HomePage> {
     ),
     Product(
       id: 'side_2',
+      dbProductId: 6,
       name: 'Chicken Nuggets',
       category: 'Sides',
       price: 4.40,
@@ -113,6 +122,7 @@ class _HomePageState extends State<HomePage> {
     ),
     Product(
       id: 'dessert_1',
+      dbProductId: 7,
       name: 'Vanilla Sundae',
       category: 'Desserts',
       price: 3.90,
@@ -121,6 +131,7 @@ class _HomePageState extends State<HomePage> {
     ),
     Product(
       id: 'dessert_2',
+      dbProductId: 8,
       name: 'Chocolate Lava Cake',
       category: 'Desserts',
       price: 5.20,

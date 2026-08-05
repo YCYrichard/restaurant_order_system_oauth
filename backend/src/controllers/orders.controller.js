@@ -13,10 +13,19 @@ exports.createOrder = async (req, res) => {
       notes
     } = req.body;
 
-    if (!storeId || !items || !Array.isArray(items) || items.length === 0 || !total || !customerName || !customerPhone) {
+    if (
+      !storeId ||
+      !items ||
+      !Array.isArray(items) ||
+      items.length === 0 ||
+      !total ||
+      !customerName ||
+      !customerPhone
+    ) {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
+    // Insert order header
     const [orderResult] = await db.execute(
       `INSERT INTO orders (
         user_id, store_id, total, customer_name, customer_phone, customer_email, notes
@@ -34,6 +43,7 @@ exports.createOrder = async (req, res) => {
 
     const orderId = orderResult.insertId;
 
+    // Prepare item values: [orderId, productId, quantity, price]
     const itemValues = items.map(item => [
       orderId,
       item.productId,
@@ -41,22 +51,28 @@ exports.createOrder = async (req, res) => {
       item.price
     ]);
 
+    // Build multi-row placeholders for MySQL
+    const placeholders = itemValues.map(() => '(?, ?, ?, ?)').join(', ');
+    const flatValues = itemValues.flat();
+
     await db.execute(
       `INSERT INTO order_items (order_id, product_id, quantity, price)
-       VALUES ?`,
-      [itemValues]
+       VALUES ${placeholders}`,
+      flatValues
     );
 
+    // Load order with store name
     const [orderRows] = await db.execute(
-      `SELECT o.*, s.name as store_name
+      `SELECT o.*, s.name AS store_name
        FROM orders o
        LEFT JOIN stores s ON o.store_id = s.id
        WHERE o.id = ?`,
       [orderId]
     );
 
+    // Load items with product name
     const [itemRows] = await db.execute(
-      `SELECT oi.*, p.name as product_name
+      `SELECT oi.*, p.name AS product_name
        FROM order_items oi
        JOIN products p ON oi.product_id = p.id
        WHERE oi.order_id = ?`,
@@ -74,7 +90,8 @@ exports.createOrder = async (req, res) => {
     console.error('Create order error:', error);
     res.status(500).json({
       message: 'Failed to create order',
-      error: error.message
+      error: error.message,
+      stack: error.stack
     });
   }
 };
@@ -84,7 +101,7 @@ exports.getUserOrders = async (req, res) => {
     const userId = req.params.userId;
 
     const [orders] = await db.execute(
-      `SELECT o.*, s.name as store_name
+      `SELECT o.*, s.name AS store_name
        FROM orders o
        LEFT JOIN stores s ON o.store_id = s.id
        WHERE o.user_id = ?
@@ -95,7 +112,7 @@ exports.getUserOrders = async (req, res) => {
     const ordersWithItems = await Promise.all(
       orders.map(async (order) => {
         const [items] = await db.execute(
-          `SELECT oi.*, p.name as product_name
+          `SELECT oi.*, p.name AS product_name
            FROM order_items oi
            JOIN products p ON oi.product_id = p.id
            WHERE oi.order_id = ?`,
@@ -120,7 +137,7 @@ exports.getOrderById = async (req, res) => {
     const orderId = req.params.orderId;
 
     const [orderRows] = await db.execute(
-      `SELECT o.*, s.name as store_name
+      `SELECT o.*, s.name AS store_name
        FROM orders o
        LEFT JOIN stores s ON o.store_id = s.id
        WHERE o.id = ?`,
@@ -132,7 +149,7 @@ exports.getOrderById = async (req, res) => {
     }
 
     const [items] = await db.execute(
-      `SELECT oi.*, p.name as product_name
+      `SELECT oi.*, p.name AS product_name
        FROM order_items oi
        JOIN products p ON oi.product_id = p.id
        WHERE oi.order_id = ?`,
