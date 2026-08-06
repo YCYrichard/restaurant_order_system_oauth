@@ -2,9 +2,11 @@
 
 import 'dart:convert';
 import 'dart:html' as html;
+
 import 'package:flutter/material.dart';
-import 'jwt_decode.dart';
+
 import 'admin_page.dart';
+import 'jwt_decode.dart';
 
 const String apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
@@ -19,161 +21,350 @@ class AdminLoginPage extends StatefulWidget {
 }
 
 class _AdminLoginPageState extends State<AdminLoginPage> {
-  final _usernameController = TextEditingController(text: 'supermao');
-  final _passwordController = TextEditingController();
+  final TextEditingController _usernameController =
+      TextEditingController(text: 'supermao');
+
+  final TextEditingController _passwordController =
+      TextEditingController();
 
   bool _isSubmitting = false;
+  bool _hidePassword = true;
   String? _message;
-  String? _token;
-  JwtPayload? _payload;
+  bool _messageIsError = false;
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   Future<void> _loginAdmin() async {
     final username = _usernameController.text.trim();
-    final password = _passwordController.text; // not used yet
+    final password = _passwordController.text;
 
     if (username.isEmpty) {
-      setState(() => _message = 'Username is required.');
+      _showMessage(
+        'Username is required.',
+        isError: true,
+      );
+      return;
+    }
+
+    if (password.isEmpty) {
+      _showMessage(
+        'Password is required.',
+        isError: true,
+      );
       return;
     }
 
     setState(() {
       _isSubmitting = true;
       _message = null;
+      _messageIsError = false;
     });
-
-    final body = {
-      'username': username,
-      'password': password, // sent for future use
-    };
 
     try {
       final request = await html.HttpRequest.request(
         '$apiBaseUrl/auth/admin-login',
         method: 'POST',
-        requestHeaders: {'Content-Type': 'application/json'},
-        sendData: jsonEncode(body),
+        requestHeaders: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        sendData: jsonEncode({
+          'username': username,
+          'password': password,
+        }),
       );
 
-      if (request.status == 200) {
-        final data = jsonDecode(request.responseText ?? '{}');
-        final token = data['token'] as String?;
+      final responseText = request.responseText ?? '{}';
+      final decodedResponse = jsonDecode(responseText);
 
-        if (token == null || token.isEmpty) {
-          setState(() {
-            _isSubmitting = false;
-            _message = 'Admin login succeeded but no token returned.';
-          });
-          return;
-        }
+      if (request.status != 200) {
+        final errorMessage = decodedResponse is Map &&
+                decodedResponse['message'] != null
+            ? decodedResponse['message'].toString()
+            : 'Admin login failed.';
 
-        final payload = JwtPayload.fromToken(token);
-
-        if (payload.role != 'admin') {
-          setState(() {
-            _isSubmitting = false;
-            _message = 'Login token is not admin. Role: ${payload.role}';
-          });
-          return;
-        }
-
-        setState(() {
-          _isSubmitting = false;
-          _token = token;
-          _payload = payload;
-          _message = 'Admin login successful.';
-        });
-
-        // Navigate to AdminPage
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => const AdminPage(),
-          ),
+        _showMessage(
+          errorMessage,
+          isError: true,
         );
-      } else {
+        return;
+      }
+
+      if (decodedResponse is! Map) {
+        _showMessage(
+          'The server returned an invalid response.',
+          isError: true,
+        );
+        return;
+      }
+
+      final token = decodedResponse['token']?.toString();
+
+      if (token == null || token.isEmpty) {
+        _showMessage(
+          'Login succeeded, but no authentication token was returned.',
+          isError: true,
+        );
+        return;
+      }
+
+      final payload = JwtPayload.fromToken(token);
+
+      if (payload.role != 'admin') {
+        _showMessage(
+          'This account does not have administrator access.',
+          isError: true,
+        );
+        return;
+      }
+
+      html.window.localStorage['auth_token'] = token;
+      html.window.localStorage['auth_role'] = payload.role ?? 'admin';
+      html.window.localStorage['auth_name'] = payload.name ?? username;
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => const AdminPage(),
+        ),
+        (route) => false,
+      );
+    } catch (error) {
+      _showMessage(
+        'Unable to connect to the backend. Make sure the API is running at $apiBaseUrl.',
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
         setState(() {
           _isSubmitting = false;
-          _message = 'Admin login failed: ${request.responseText}';
         });
       }
-    } catch (e) {
-      setState(() {
-        _isSubmitting = false;
-        _message = 'Network error: ${e.toString()}';
-      });
     }
+  }
+
+  void _showMessage(
+    String message, {
+    required bool isError,
+  }) {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _message = message;
+      _messageIsError = isError;
+      _isSubmitting = false;
+    });
+  }
+
+  void _goBack() {
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+      return;
+    }
+
+    html.window.location.hash = '';
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFFFFBF7),
       appBar: AppBar(
-        title: const Text('Admin Login'),
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         elevation: 0,
+        leading: IconButton(
+          onPressed: _goBack,
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Back',
+        ),
+        title: const Text('Admin Login'),
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Card(
-            elevation: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    'Admin Login',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Sign in with the local admin account to manage stores and products.',
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                  TextFormField(
-                    controller: _usernameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Username',
-                      border: OutlineInputBorder(),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: 440,
+              ),
+              child: Card(
+                color: Colors.white,
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: AutofillGroup(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Container(
+                          width: 72,
+                          height: 72,
+                          decoration: BoxDecoration(
+                            color: Colors.deepOrange.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Icon(
+                            Icons.admin_panel_settings,
+                            color: Colors.deepOrange,
+                            size: 42,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        const Text(
+                          'Restaurant Admin',
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Sign in to manage stores, products, categories, and restaurant settings.',
+                          style: TextStyle(
+                            color: Color(0xFF625D5A),
+                            height: 1.5,
+                          ),
+                        ),
+                        const SizedBox(height: 28),
+                        TextFormField(
+                          controller: _usernameController,
+                          enabled: !_isSubmitting,
+                          textInputAction: TextInputAction.next,
+                          autofillHints: const [
+                            AutofillHints.username,
+                          ],
+                          decoration: const InputDecoration(
+                            labelText: 'Username',
+                            hintText: 'supermao',
+                            prefixIcon: Icon(Icons.person_outline),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: _passwordController,
+                          enabled: !_isSubmitting,
+                          obscureText: _hidePassword,
+                          textInputAction: TextInputAction.done,
+                          autofillHints: const [
+                            AutofillHints.password,
+                          ],
+                          onFieldSubmitted: (_) {
+                            if (!_isSubmitting) {
+                              _loginAdmin();
+                            }
+                          },
+                          decoration: InputDecoration(
+                            labelText: 'Password',
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            suffixIcon: IconButton(
+                              onPressed: () {
+                                setState(() {
+                                  _hidePassword = !_hidePassword;
+                                });
+                              },
+                              icon: Icon(
+                                _hidePassword
+                                    ? Icons.visibility_outlined
+                                    : Icons.visibility_off_outlined,
+                              ),
+                              tooltip: _hidePassword
+                                  ? 'Show password'
+                                  : 'Hide password',
+                            ),
+                            border: const OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        if (_message != null) ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: _messageIsError
+                                  ? const Color(0xFFFFEDEA)
+                                  : const Color(0xFFE8F6EC),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  _messageIsError
+                                      ? Icons.error_outline
+                                      : Icons.check_circle_outline,
+                                  color: _messageIsError
+                                      ? Colors.redAccent
+                                      : Colors.green,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    _message!,
+                                    style: TextStyle(
+                                      color: _messageIsError
+                                          ? Colors.redAccent
+                                          : Colors.green.shade800,
+                                      fontWeight: FontWeight.w600,
+                                      height: 1.4,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+                        SizedBox(
+                          height: 52,
+                          child: FilledButton.icon(
+                            onPressed:
+                                _isSubmitting ? null : _loginAdmin,
+                            icon: _isSubmitting
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(Icons.login),
+                            label: Text(
+                              _isSubmitting
+                                  ? 'Signing in...'
+                                  : 'Sign in as Admin',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        const Text(
+                          'Your account must have role = admin in the users table.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Color(0xFF77716D),
+                            fontSize: 12,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _passwordController,
-                    decoration: const InputDecoration(
-                      labelText: 'Password (not enforced yet)',
-                      border: OutlineInputBorder(),
-                    ),
-                    obscureText: true,
-                  ),
-                  const SizedBox(height: 16),
-                  if (_message != null) ...[
-                    Text(
-                      _message!,
-                      style: const TextStyle(
-                        color: Colors.deepOrange,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  FilledButton.icon(
-                    onPressed: _isSubmitting ? null : _loginAdmin,
-                    icon: _isSubmitting
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.lock_open),
-                    label: Text(_isSubmitting ? 'Signing in...' : 'Sign in as Admin'),
-                  ),
-                ],
+                ),
               ),
             ),
           ),

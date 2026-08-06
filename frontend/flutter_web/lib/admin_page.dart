@@ -2,7 +2,10 @@
 
 import 'dart:convert';
 import 'dart:html' as html;
+
 import 'package:flutter/material.dart';
+
+import 'admin_login_page.dart';
 
 const String apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
@@ -18,19 +21,17 @@ class AdminPage extends StatefulWidget {
 
 class _AdminPageState extends State<AdminPage> {
   List<Map<String, dynamic>> stores = [];
+  List<Map<String, dynamic>> products = [];
+
   Map<String, dynamic>? selectedStore;
 
-  final _storeNameController = TextEditingController();
-  final _storeAddressController = TextEditingController();
-  final _storePhoneController = TextEditingController();
-
-  final _productNameController = TextEditingController();
-  final _productPriceController = TextEditingController();
+  bool _loadingStores = false;
+  bool _loadingProducts = false;
+  bool _savingStore = false;
+  bool _savingProduct = false;
 
   String? _message;
-  bool _loadingStores = false;
-  bool _creatingStore = false;
-  bool _creatingProduct = false;
+  bool _messageIsError = false;
 
   @override
   void initState() {
@@ -38,202 +39,1100 @@ class _AdminPageState extends State<AdminPage> {
     _loadStores();
   }
 
+  String? get _token {
+    return html.window.localStorage['auth_token'];
+  }
+
+  Map<String, String> _headers({
+    bool json = false,
+  }) {
+    final token = _token;
+
+    final headers = <String, String>{
+      'Accept': 'application/json',
+    };
+
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+
+    if (json) {
+      headers['Content-Type'] = 'application/json';
+    }
+
+    return headers;
+  }
+
+  bool _isUnauthorized(int? status) {
+    return status == 401 || status == 403;
+  }
+
+  void _showMessage(
+    String message, {
+    bool isError = false,
+  }) {
+    if (!mounted) return;
+
+    setState(() {
+      _message = message;
+      _messageIsError = isError;
+    });
+  }
+
+  void _clearMessage() {
+    if (!mounted) return;
+
+    setState(() {
+      _message = null;
+      _messageIsError = false;
+    });
+  }
+
+  void _handleUnauthorized() {
+    html.window.localStorage.remove('auth_token');
+    html.window.localStorage.remove('auth_role');
+    html.window.localStorage.remove('auth_name');
+
+    if (!mounted) return;
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => const AdminLoginPage(),
+      ),
+      (route) => false,
+    );
+  }
+
+  Map<String, dynamic> _decodeMap(String responseText) {
+    final decoded = jsonDecode(responseText);
+
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+
+    return <String, dynamic>{};
+  }
+
+  List<Map<String, dynamic>> _decodeList(
+    String responseText,
+    String key,
+  ) {
+    final decoded = _decodeMap(responseText);
+    final value = decoded[key];
+
+    if (value is! List) {
+      return [];
+    }
+
+    return value
+        .whereType<Map>()
+        .map(
+          (item) => Map<String, dynamic>.from(item),
+        )
+        .toList();
+  }
+
   Future<void> _loadStores() async {
+    if (_token == null || _token!.isEmpty) {
+      _handleUnauthorized();
+      return;
+    }
+
     setState(() {
       _loadingStores = true;
-      _message = null;
     });
 
     try {
       final request = await html.HttpRequest.request(
         '$apiBaseUrl/stores',
         method: 'GET',
+        requestHeaders: _headers(),
       );
 
-      if (request.status == 200) {
-        final data = jsonDecode(request.responseText ?? '{}');
-        final list = (data['stores'] as List?) ?? [];
-        setState(() {
-          stores = list.cast<Map<String, dynamic>>();
-          if (stores.isNotEmpty && selectedStore == null) {
-            selectedStore = stores.first;
+      if (_isUnauthorized(request.status)) {
+        _handleUnauthorized();
+        return;
+      }
+
+      if (request.status != 200) {
+        _showMessage(
+          'Failed to load stores: ${request.responseText}',
+          isError: true,
+        );
+        return;
+      }
+
+      final loadedStores = _decodeList(
+        request.responseText ?? '{}',
+        'stores',
+      );
+
+      Map<String, dynamic>? nextSelectedStore;
+
+      if (loadedStores.isNotEmpty) {
+        if (selectedStore != null) {
+          final selectedId = selectedStore!['id'];
+
+          for (final store in loadedStores) {
+            if (store['id'] == selectedId) {
+              nextSelectedStore = store;
+              break;
+            }
           }
-          _loadingStores = false;
-        });
+        }
+
+        nextSelectedStore ??= loadedStores.first;
+      }
+
+      setState(() {
+        stores = loadedStores;
+        selectedStore = nextSelectedStore;
+        _loadingStores = false;
+      });
+
+      if (selectedStore != null) {
+        await _loadProductsForSelectedStore();
       } else {
         setState(() {
-          _loadingStores = false;
-          _message = 'Failed to load stores: ${request.responseText}';
+          products = [];
+          _loadingProducts = false;
         });
       }
-    } catch (e) {
+    } catch (error) {
       setState(() {
         _loadingStores = false;
-        _message = 'Network error loading stores: ${e.toString()}';
       });
+
+      _showMessage(
+        'Network error while loading stores: $error',
+        isError: true,
+      );
     }
   }
 
-  Future<void> _createStore() async {
-    final name = _storeNameController.text.trim();
-    if (name.isEmpty) {
-      setState(() => _message = 'Store name is required.');
+  Future<void> _loadProductsForSelectedStore() async {
+    if (selectedStore == null) {
+      setState(() {
+        products = [];
+      });
+      return;
+    }
+
+    final storeId = selectedStore!['id'];
+
+    if (storeId == null) {
+      _showMessage(
+        'Selected store does not have a valid ID.',
+        isError: true,
+      );
       return;
     }
 
     setState(() {
-      _creatingStore = true;
-      _message = null;
+      _loadingProducts = true;
     });
 
-    final body = {
-      'name': name,
-      'address': _storeAddressController.text.trim(),
-      'phone': _storePhoneController.text.trim(),
-    };
+    try {
+      final request = await html.HttpRequest.request(
+        '$apiBaseUrl/products/store/$storeId',
+        method: 'GET',
+        requestHeaders: _headers(),
+      );
+
+      if (_isUnauthorized(request.status)) {
+        _handleUnauthorized();
+        return;
+      }
+
+      if (request.status != 200) {
+        _showMessage(
+          'Failed to load products: ${request.responseText}',
+          isError: true,
+        );
+        return;
+      }
+
+      final loadedProducts = _decodeList(
+        request.responseText ?? '{}',
+        'products',
+      );
+
+      setState(() {
+        products = loadedProducts;
+        _loadingProducts = false;
+      });
+    } catch (error) {
+      setState(() {
+        _loadingProducts = false;
+      });
+
+      _showMessage(
+        'Network error while loading products: $error',
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _createStore({
+    required String name,
+    required String address,
+    required String phone,
+  }) async {
+    if (name.trim().isEmpty) {
+      _showMessage(
+        'Store name is required.',
+        isError: true,
+      );
+      return;
+    }
+
+    setState(() {
+      _savingStore = true;
+    });
 
     try {
       final request = await html.HttpRequest.request(
         '$apiBaseUrl/stores',
         method: 'POST',
-        requestHeaders: {'Content-Type': 'application/json'},
-        sendData: jsonEncode(body),
+        requestHeaders: _headers(json: true),
+        sendData: jsonEncode({
+          'name': name.trim(),
+          'address': address.trim(),
+          'phone': phone.trim(),
+        }),
       );
 
-      if (request.status == 201) {
+      if (_isUnauthorized(request.status)) {
+        _handleUnauthorized();
+        return;
+      }
+
+      if (request.status != 201) {
+        _showMessage(
+          'Failed to create store: ${request.responseText}',
+          isError: true,
+        );
+        return;
+      }
+
+      _showMessage('Store created successfully.');
+      await _loadStores();
+    } catch (error) {
+      _showMessage(
+        'Network error while creating store: $error',
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
         setState(() {
-          _creatingStore = false;
-          _storeNameController.clear();
-          _storeAddressController.clear();
-          _storePhoneController.clear();
-          _message = 'Store created successfully.';
-        });
-        await _loadStores();
-      } else {
-        setState(() {
-          _creatingStore = false;
-          _message = 'Failed to create store: ${request.responseText}';
+          _savingStore = false;
         });
       }
-    } catch (e) {
-      setState(() {
-        _creatingStore = false;
-        _message = 'Network error creating store: ${e.toString()}';
-      });
     }
   }
 
-  Future<void> _createProduct() async {
-    if (selectedStore == null) {
-      setState(() => _message = 'Select a store first.');
-      return;
-    }
-
-    final name = _productNameController.text.trim();
-    final priceText = _productPriceController.text.trim();
-    if (name.isEmpty || priceText.isEmpty) {
-      setState(() => _message = 'Product name and price are required.');
-      return;
-    }
-
-    final price = double.tryParse(priceText);
-    if (price == null) {
-      setState(() => _message = 'Price must be a number.');
+  Future<void> _updateStore({
+    required int storeId,
+    required String name,
+    required String address,
+    required String phone,
+  }) async {
+    if (name.trim().isEmpty) {
+      _showMessage(
+        'Store name is required.',
+        isError: true,
+      );
       return;
     }
 
     setState(() {
-      _creatingProduct = true;
-      _message = null;
+      _savingStore = true;
     });
-
-    final body = {
-      'storeId': selectedStore!['id'],
-      'name': name,
-      'price': price,
-      'isActive': true,
-    };
 
     try {
       final request = await html.HttpRequest.request(
-        '$apiBaseUrl/products',
-        method: 'POST',
-        requestHeaders: {'Content-Type': 'application/json'},
-        sendData: jsonEncode(body),
+        '$apiBaseUrl/stores/$storeId',
+        method: 'PUT',
+        requestHeaders: _headers(json: true),
+        sendData: jsonEncode({
+          'name': name.trim(),
+          'address': address.trim(),
+          'phone': phone.trim(),
+        }),
       );
 
-      if (request.status == 201) {
+      if (_isUnauthorized(request.status)) {
+        _handleUnauthorized();
+        return;
+      }
+
+      if (request.status != 200) {
+        _showMessage(
+          'Failed to update store: ${request.responseText}',
+          isError: true,
+        );
+        return;
+      }
+
+      _showMessage('Store updated successfully.');
+      await _loadStores();
+    } catch (error) {
+      _showMessage(
+        'Network error while updating store: $error',
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
         setState(() {
-          _creatingProduct = false;
-          _productNameController.clear();
-          _productPriceController.clear();
-          _message = 'Product created successfully.';
-        });
-      } else {
-        setState(() {
-          _creatingProduct = false;
-          _message = 'Failed to create product: ${request.responseText}';
+          _savingStore = false;
         });
       }
-    } catch (e) {
-      setState(() {
-        _creatingProduct = false;
-        _message = 'Network error creating product: ${e.toString()}';
-      });
     }
+  }
+
+  Future<void> _updateStoreStatus({
+    required int storeId,
+    required bool isActive,
+  }) async {
+    try {
+      final request = await html.HttpRequest.request(
+        '$apiBaseUrl/stores/$storeId/status',
+        method: 'PATCH',
+        requestHeaders: _headers(json: true),
+        sendData: jsonEncode({
+          'isActive': isActive,
+        }),
+      );
+
+      if (_isUnauthorized(request.status)) {
+        _handleUnauthorized();
+        return;
+      }
+
+      if (request.status != 200) {
+        _showMessage(
+          'Failed to update store status: ${request.responseText}',
+          isError: true,
+        );
+        return;
+      }
+
+      _showMessage(
+        isActive
+            ? 'Store activated successfully.'
+            : 'Store deactivated successfully.',
+      );
+
+      await _loadStores();
+    } catch (error) {
+      _showMessage(
+        'Network error while updating store status: $error',
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _createProduct({
+    required String name,
+    required String description,
+    required double price,
+  }) async {
+    if (selectedStore == null) {
+      _showMessage(
+        'Select a store first.',
+        isError: true,
+      );
+      return;
+    }
+
+    final storeId = selectedStore!['id'];
+
+    setState(() {
+      _savingProduct = true;
+    });
+
+    try {
+      final request = await html.HttpRequest.request(
+        '$apiBaseUrl/products/store/$storeId',
+        method: 'POST',
+        requestHeaders: _headers(json: true),
+        sendData: jsonEncode({
+          'name': name.trim(),
+          'description': description.trim(),
+          'price': price,
+        }),
+      );
+
+      if (_isUnauthorized(request.status)) {
+        _handleUnauthorized();
+        return;
+      }
+
+      if (request.status != 201) {
+        _showMessage(
+          'Failed to create product: ${request.responseText}',
+          isError: true,
+        );
+        return;
+      }
+
+      _showMessage('Product created successfully.');
+      await _loadProductsForSelectedStore();
+    } catch (error) {
+      _showMessage(
+        'Network error while creating product: $error',
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingProduct = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _updateProduct({
+    required int productId,
+    required String name,
+    required String description,
+    required double price,
+  }) async {
+    setState(() {
+      _savingProduct = true;
+    });
+
+    try {
+      final request = await html.HttpRequest.request(
+        '$apiBaseUrl/products/$productId',
+        method: 'PUT',
+        requestHeaders: _headers(json: true),
+        sendData: jsonEncode({
+          'name': name.trim(),
+          'description': description.trim(),
+          'price': price,
+        }),
+      );
+
+      if (_isUnauthorized(request.status)) {
+        _handleUnauthorized();
+        return;
+      }
+
+      if (request.status != 200) {
+        _showMessage(
+          'Failed to update product: ${request.responseText}',
+          isError: true,
+        );
+        return;
+      }
+
+      _showMessage('Product updated successfully.');
+      await _loadProductsForSelectedStore();
+    } catch (error) {
+      _showMessage(
+        'Network error while updating product: $error',
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingProduct = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _updateProductStatus({
+    required int productId,
+    required bool isActive,
+  }) async {
+    try {
+      final request = await html.HttpRequest.request(
+        '$apiBaseUrl/products/$productId/status',
+        method: 'PATCH',
+        requestHeaders: _headers(json: true),
+        sendData: jsonEncode({
+          'isActive': isActive,
+        }),
+      );
+
+      if (_isUnauthorized(request.status)) {
+        _handleUnauthorized();
+        return;
+      }
+
+      if (request.status != 200) {
+        _showMessage(
+          'Failed to update product status: ${request.responseText}',
+          isError: true,
+        );
+        return;
+      }
+
+      _showMessage(
+        isActive
+            ? 'Product activated successfully.'
+            : 'Product deactivated successfully.',
+      );
+
+      await _loadProductsForSelectedStore();
+    } catch (error) {
+      _showMessage(
+        'Network error while updating product status: $error',
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _showCreateStoreDialog() async {
+    final nameController = TextEditingController();
+    final addressController = TextEditingController();
+    final phoneController = TextEditingController();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Create Store'),
+          content: SizedBox(
+            width: 460,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Store name',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: addressController,
+                    decoration: const InputDecoration(
+                      labelText: 'Address',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: phoneController,
+                    decoration: const InputDecoration(
+                      labelText: 'Phone',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: _savingStore
+                  ? null
+                  : () async {
+                      final name = nameController.text.trim();
+
+                      if (name.isEmpty) {
+                        _showMessage(
+                          'Store name is required.',
+                          isError: true,
+                        );
+                        return;
+                      }
+
+                      Navigator.of(dialogContext).pop();
+
+                      await _createStore(
+                        name: name,
+                        address: addressController.text,
+                        phone: phoneController.text,
+                      );
+                    },
+              child: const Text('Create'),
+            ),
+          ],
+        );
+      },
+    );
+
+    nameController.dispose();
+    addressController.dispose();
+    phoneController.dispose();
+  }
+
+  Future<void> _showEditStoreDialog(
+    Map<String, dynamic> store,
+  ) async {
+    final storeId = int.tryParse(store['id'].toString());
+
+    if (storeId == null) {
+      _showMessage(
+        'Invalid store ID.',
+        isError: true,
+      );
+      return;
+    }
+
+    final nameController = TextEditingController(
+      text: store['name']?.toString() ?? '',
+    );
+
+    final addressController = TextEditingController(
+      text: store['address']?.toString() ?? '',
+    );
+
+    final phoneController = TextEditingController(
+      text: store['phone']?.toString() ?? '',
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Edit Store'),
+          content: SizedBox(
+            width: 460,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Store name',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: addressController,
+                    decoration: const InputDecoration(
+                      labelText: 'Address',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: phoneController,
+                    decoration: const InputDecoration(
+                      labelText: 'Phone',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: _savingStore
+                  ? null
+                  : () async {
+                      final name = nameController.text.trim();
+
+                      if (name.isEmpty) {
+                        _showMessage(
+                          'Store name is required.',
+                          isError: true,
+                        );
+                        return;
+                      }
+
+                      Navigator.of(dialogContext).pop();
+
+                      await _updateStore(
+                        storeId: storeId,
+                        name: name,
+                        address: addressController.text,
+                        phone: phoneController.text,
+                      );
+                    },
+              child: const Text('Save Changes'),
+            ),
+          ],
+        );
+      },
+    );
+
+    nameController.dispose();
+    addressController.dispose();
+    phoneController.dispose();
+  }
+
+  Future<void> _showCreateProductDialog() async {
+    if (selectedStore == null) {
+      _showMessage(
+        'Select a store before creating a product.',
+        isError: true,
+      );
+      return;
+    }
+
+    final nameController = TextEditingController();
+    final descriptionController = TextEditingController();
+    final priceController = TextEditingController();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(
+            'Create Product for ${selectedStore!['name']}',
+          ),
+          content: SizedBox(
+            width: 500,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Product name',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: descriptionController,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: 'Description',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: priceController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Price',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: _savingProduct
+                  ? null
+                  : () async {
+                      final name = nameController.text.trim();
+                      final price = double.tryParse(
+                        priceController.text.trim(),
+                      );
+
+                      if (name.isEmpty) {
+                        _showMessage(
+                          'Product name is required.',
+                          isError: true,
+                        );
+                        return;
+                      }
+
+                      if (price == null || price < 0) {
+                        _showMessage(
+                          'Enter a valid product price.',
+                          isError: true,
+                        );
+                        return;
+                      }
+
+                      Navigator.of(dialogContext).pop();
+
+                      await _createProduct(
+                        name: name,
+                        description: descriptionController.text,
+                        price: price,
+                      );
+                    },
+              child: const Text('Create Product'),
+            ),
+          ],
+        );
+      },
+    );
+
+    nameController.dispose();
+    descriptionController.dispose();
+    priceController.dispose();
+  }
+
+  Future<void> _showEditProductDialog(
+    Map<String, dynamic> product,
+  ) async {
+    final productId = int.tryParse(product['id'].toString());
+
+    if (productId == null) {
+      _showMessage(
+        'Invalid product ID.',
+        isError: true,
+      );
+      return;
+    }
+
+    final nameController = TextEditingController(
+      text: product['name']?.toString() ?? '',
+    );
+
+    final descriptionController = TextEditingController(
+      text: product['description']?.toString() ?? '',
+    );
+
+    final priceController = TextEditingController(
+      text: product['price']?.toString() ?? '',
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Edit Product'),
+          content: SizedBox(
+            width: 500,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Product name',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: descriptionController,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: 'Description',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: priceController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Price',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: _savingProduct
+                  ? null
+                  : () async {
+                      final name = nameController.text.trim();
+                      final price = double.tryParse(
+                        priceController.text.trim(),
+                      );
+
+                      if (name.isEmpty) {
+                        _showMessage(
+                          'Product name is required.',
+                          isError: true,
+                        );
+                        return;
+                      }
+
+                      if (price == null || price < 0) {
+                        _showMessage(
+                          'Enter a valid product price.',
+                          isError: true,
+                        );
+                        return;
+                      }
+
+                      Navigator.of(dialogContext).pop();
+
+                      await _updateProduct(
+                        productId: productId,
+                        name: name,
+                        description: descriptionController.text,
+                        price: price,
+                      );
+                    },
+              child: const Text('Save Changes'),
+            ),
+          ],
+        );
+      },
+    );
+
+    nameController.dispose();
+    descriptionController.dispose();
+    priceController.dispose();
+  }
+
+  void _selectStore(Map<String, dynamic> store) {
+    setState(() {
+      selectedStore = store;
+      products = [];
+    });
+
+    _loadProductsForSelectedStore();
+  }
+
+  void _logout() {
+    html.window.localStorage.remove('auth_token');
+    html.window.localStorage.remove('auth_role');
+    html.window.localStorage.remove('auth_name');
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => const AdminLoginPage(),
+      ),
+      (route) => false,
+    );
+  }
+
+  bool _storeIsActive(Map<String, dynamic> store) {
+    final value = store['is_active'];
+
+    if (value is bool) {
+      return value;
+    }
+
+    if (value is num) {
+      return value != 0;
+    }
+
+    return value.toString() == '1' ||
+        value.toString().toLowerCase() == 'true';
+  }
+
+  bool _productIsActive(Map<String, dynamic> product) {
+    final value = product['is_active'];
+
+    if (value is bool) {
+      return value;
+    }
+
+    if (value is num) {
+      return value != 0;
+    }
+
+    return value.toString() == '1' ||
+        value.toString().toLowerCase() == 'true';
+  }
+
+  String _formatPrice(dynamic price) {
+    final parsed = double.tryParse(price.toString());
+
+    if (parsed == null) {
+      return price.toString();
+    }
+
+    return parsed.toStringAsFixed(2);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFFFFBF7),
       appBar: AppBar(
-        title: const Text('Admin – Stores & Products'),
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         elevation: 0,
+        title: const Text('Admin Dashboard'),
+        actions: [
+          IconButton(
+            onPressed: _loadingStores ? null : _loadStores,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+          ),
+          const SizedBox(width: 8),
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: OutlinedButton.icon(
+              onPressed: _logout,
+              icon: const Icon(Icons.logout),
+              label: const Text('Logout'),
+            ),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1100),
+            constraints: const BoxConstraints(maxWidth: 1250),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (_message != null) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFF3EB),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      _message!,
-                      style: const TextStyle(
-                        color: Colors.deepOrange,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      flex: 5,
-                      child: _buildStoresPanel(),
-                    ),
-                    const SizedBox(width: 24),
-                    Expanded(
-                      flex: 5,
-                      child: _buildCreateStoreForm(),
-                    ),
-                  ],
+                _buildHeader(),
+                const SizedBox(height: 20),
+                if (_message != null) _buildMessage(),
+                if (_message != null) const SizedBox(height: 20),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isWide = constraints.maxWidth >= 900;
+
+                    if (isWide) {
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            flex: 4,
+                            child: _buildStoresPanel(),
+                          ),
+                          const SizedBox(width: 20),
+                          Expanded(
+                            flex: 6,
+                            child: _buildProductsPanel(),
+                          ),
+                        ],
+                      );
+                    }
+
+                    return Column(
+                      children: [
+                        _buildStoresPanel(),
+                        const SizedBox(height: 20),
+                        _buildProductsPanel(),
+                      ],
+                    );
+                  },
                 ),
-                const SizedBox(height: 32),
-                _buildCreateProductForm(),
               ],
             ),
           ),
@@ -242,186 +1141,504 @@ class _AdminPageState extends State<AdminPage> {
     );
   }
 
+  Widget _buildHeader() {
+    final adminName =
+        html.window.localStorage['auth_name'] ?? 'Administrator';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFFFFF0E8),
+            Color(0xFFFFFBF7),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 30,
+            backgroundColor: Colors.deepOrange.withOpacity(0.14),
+            child: const Icon(
+              Icons.admin_panel_settings,
+              color: Colors.deepOrange,
+              size: 32,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Welcome, $adminName',
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Manage stores and products from one place.',
+                  style: TextStyle(
+                    color: Color(0xFF625D5A),
+                    height: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessage() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _messageIsError
+            ? const Color(0xFFFFEDEA)
+            : const Color(0xFFE8F6EC),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _messageIsError
+                ? Icons.error_outline
+                : Icons.check_circle_outline,
+            color: _messageIsError ? Colors.redAccent : Colors.green,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _message!,
+              style: TextStyle(
+                color: _messageIsError
+                    ? Colors.redAccent
+                    : Colors.green.shade800,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: _clearMessage,
+            icon: const Icon(Icons.close),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStoresPanel() {
     return Card(
+      color: Colors.white,
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                const Text(
-                  'Stores',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
+                const Expanded(
+                  child: Text(
+                    'Stores',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
-                const Spacer(),
                 IconButton(
                   onPressed: _loadingStores ? null : _loadStores,
                   icon: const Icon(Icons.refresh),
-                  tooltip: 'Reload stores',
+                  tooltip: 'Refresh stores',
+                ),
+                IconButton(
+                  onPressed: _showCreateStoreDialog,
+                  icon: const Icon(Icons.add_business),
+                  tooltip: 'Create store',
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
             if (_loadingStores)
-              const Padding(
-                padding: EdgeInsets.all(8.0),
-                child: CircularProgressIndicator(),
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(),
+                ),
               )
             else if (stores.isEmpty)
-              const Text('No stores yet. Create one using the form on the right.')
+              _buildEmptyState(
+                icon: Icons.store_outlined,
+                message: 'No stores found.',
+                buttonLabel: 'Create Store',
+                onPressed: _showCreateStoreDialog,
+              )
             else
               Column(
-                children: stores.map((store) {
-                  final selected = selectedStore != null &&
-                      selectedStore!['id'] == store['id'];
-                  return ListTile(
-                    title: Text(store['name'] ?? ''),
-                    subtitle: Text(
-                      '${store['address'] ?? ''}\n${store['phone'] ?? ''}',
+                children: stores.map(_buildStoreTile).toList(),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStoreTile(Map<String, dynamic> store) {
+    final isSelected = selectedStore != null &&
+        selectedStore!['id'] == store['id'];
+
+    final isActive = _storeIsActive(store);
+    final productCount = store['product_count'] ?? 0;
+
+    return Card(
+      color: isSelected
+          ? const Color(0xFFFFF3EB)
+          : const Color(0xFFFAFAFA),
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: isSelected
+              ? Colors.deepOrange
+              : Colors.transparent,
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _selectStore(store),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: isActive
+                    ? Colors.green.withOpacity(0.12)
+                    : Colors.grey.withOpacity(0.14),
+                child: Icon(
+                  Icons.store,
+                  color: isActive ? Colors.green : Colors.grey,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      store['name']?.toString() ?? 'Unnamed Store',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                    isThreeLine: true,
-                    selected: selected,
-                    onTap: () {
-                      setState(() {
-                        selectedStore = store;
-                      });
-                    },
+                    const SizedBox(height: 5),
+                    Text(
+                      store['address']?.toString().isNotEmpty == true
+                          ? store['address'].toString()
+                          : 'No address',
+                      style: const TextStyle(
+                        color: Color(0xFF625D5A),
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      '$productCount products • '
+                      '${isActive ? 'Active' : 'Inactive'}',
+                      style: TextStyle(
+                        color: isActive ? Colors.green : Colors.grey,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuButton<String>(
+                onSelected: (value) async {
+                  final storeId = int.tryParse(
+                    store['id'].toString(),
                   );
-                }).toList(),
+
+                  if (storeId == null) return;
+
+                  if (value == 'edit') {
+                    await _showEditStoreDialog(store);
+                  }
+
+                  if (value == 'toggle') {
+                    await _updateStoreStatus(
+                      storeId: storeId,
+                      isActive: !isActive,
+                    );
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.edit_outlined),
+                      title: Text('Edit store'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'toggle',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        isActive
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                      ),
+                      title: Text(
+                        isActive
+                            ? 'Deactivate store'
+                            : 'Activate store',
+                      ),
+                    ),
+                  ),
+                ],
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildCreateStoreForm() {
+  Widget _buildProductsPanel() {
+    final storeName = selectedStore?['name']?.toString();
+
     return Card(
+      color: Colors.white,
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Create Store',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _storeNameController,
-              decoration: const InputDecoration(
-                labelText: 'Name',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _storeAddressController,
-              decoration: const InputDecoration(
-                labelText: 'Address',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _storePhoneController,
-              decoration: const InputDecoration(
-                labelText: 'Phone',
-                border: OutlineInputBorder(),
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    storeName == null
+                        ? 'Products'
+                        : 'Products · $storeName',
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: selectedStore == null || _loadingProducts
+                      ? null
+                      : _loadProductsForSelectedStore,
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh products',
+                ),
+                IconButton(
+                  onPressed: selectedStore == null
+                      ? null
+                      : _showCreateProductDialog,
+                  icon: const Icon(Icons.add),
+                  tooltip: 'Create product',
+                ),
+              ],
             ),
             const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton.icon(
-                onPressed: _creatingStore ? null : _createStore,
-                icon: _creatingStore
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.add_business),
-                label: Text(_creatingStore ? 'Creating...' : 'Create Store'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCreateProductForm() {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Create Product for Selected Store',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 12),
             if (selectedStore == null)
-              const Text('Select a store in the Stores panel first.')
+              _buildEmptyState(
+                icon: Icons.touch_app_outlined,
+                message: 'Select a store to view its products.',
+              )
+            else if (_loadingProducts)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(),
+                ),
+              )
+            else if (products.isEmpty)
+              _buildEmptyState(
+                icon: Icons.inventory_2_outlined,
+                message: 'This store has no products yet.',
+                buttonLabel: 'Create Product',
+                onPressed: _showCreateProductDialog,
+              )
             else
-              Text(
-                'Selected Store: ${selectedStore!['name']}',
-                style: const TextStyle(fontWeight: FontWeight.w600),
+              Column(
+                children: products.map(_buildProductTile).toList(),
               ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _productNameController,
-              decoration: const InputDecoration(
-                labelText: 'Product Name',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _productPriceController,
-              decoration: const InputDecoration(
-                labelText: 'Price',
-                border: OutlineInputBorder(),
-              ),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton.icon(
-                onPressed:
-                    _creatingProduct || selectedStore == null ? null : _createProduct,
-                icon: _creatingProduct
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.add),
-                label: Text(_creatingProduct ? 'Creating...' : 'Create Product'),
-              ),
-            ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildProductTile(Map<String, dynamic> product) {
+    final productId = int.tryParse(
+      product['id'].toString(),
+    );
+
+    final isActive = _productIsActive(product);
+
+    return Card(
+      color: const Color(0xFFFAFAFA),
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            CircleAvatar(
+              backgroundColor: isActive
+                  ? Colors.deepOrange.withOpacity(0.12)
+                  : Colors.grey.withOpacity(0.14),
+              child: Icon(
+                Icons.fastfood,
+                color: isActive ? Colors.deepOrange : Colors.grey,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    product['name']?.toString() ?? 'Unnamed Product',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    product['description']?.toString().isNotEmpty == true
+                        ? product['description'].toString()
+                        : 'No description',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF625D5A),
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  Text(
+                    '\$${_formatPrice(product['price'])}',
+                    style: const TextStyle(
+                      color: Colors.deepOrange,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (productId != null)
+              PopupMenuButton<String>(
+                onSelected: (value) async {
+                  if (value == 'edit') {
+                    await _showEditProductDialog(product);
+                  }
+
+                  if (value == 'toggle') {
+                    await _updateProductStatus(
+                      productId: productId,
+                      isActive: !isActive,
+                    );
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.edit_outlined),
+                      title: Text('Edit product'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'toggle',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        isActive
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                      ),
+                      title: Text(
+                        isActive
+                            ? 'Deactivate product'
+                            : 'Activate product',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState({
+    required IconData icon,
+    required String message,
+    String? buttonLabel,
+    VoidCallback? onPressed,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAFAFA),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            icon,
+            size: 42,
+            color: Colors.grey,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFF625D5A),
+            ),
+          ),
+          if (buttonLabel != null && onPressed != null) ...[
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: onPressed,
+              icon: const Icon(Icons.add),
+              label: Text(buttonLabel),
+            ),
+          ],
+        ],
       ),
     );
   }

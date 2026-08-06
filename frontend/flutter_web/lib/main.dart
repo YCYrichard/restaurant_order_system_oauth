@@ -37,36 +37,46 @@ class RoleRouterPage extends StatefulWidget {
 }
 
 class _RoleRouterPageState extends State<RoleRouterPage> {
-  String? token;
-  JwtPayload? payload;
+  bool _loading = true;
+  String? _token;
+  JwtPayload? _payload;
 
   @override
   void initState() {
     super.initState();
-    _readTokenFromUrl();
+    _loadStoredAuthentication();
   }
 
-  void _readTokenFromUrl() {
-    final hash = html.window.location.hash;
-    if (hash.startsWith('#/auth-success')) {
-      final uri = Uri.tryParse(hash.replaceFirst('#', ''));
-      final extractedToken = uri?.queryParameters['token'];
-      if (extractedToken != null && extractedToken.isNotEmpty) {
-        setState(() {
-          token = extractedToken;
-          payload = JwtPayload.fromToken(extractedToken);
-        });
-      }
+  void _loadStoredAuthentication() {
+    final storedToken = html.window.localStorage['auth_token'];
+
+    if (storedToken == null || storedToken.isEmpty) {
+      setState(() {
+        _loading = false;
+      });
+      return;
     }
+
+    final payload = JwtPayload.fromToken(storedToken);
+
+    setState(() {
+      _token = storedToken;
+      _payload = payload;
+      _loading = false;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (token == null || payload == null) {
-      return const HomePage();
+    if (_loading) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
     }
 
-    if (payload!.role == 'admin') {
+    if (_token != null && _payload != null && _payload!.role == 'admin') {
       return const AdminPage();
     }
 
@@ -203,6 +213,10 @@ class _HomePageState extends State<HomePage> {
             ? 'Signed in successfully.'
             : 'Sign-in completed, but token was not found.';
       });
+
+      if (extractedToken != null && extractedToken.isNotEmpty) {
+        html.window.localStorage['auth_token'] = extractedToken;
+      }
     }
   }
 
@@ -215,6 +229,10 @@ class _HomePageState extends State<HomePage> {
       token = null;
       userMessage = 'You have signed out locally.';
     });
+
+    html.window.localStorage.remove('auth_token');
+    html.window.localStorage.remove('auth_role');
+    html.window.localStorage.remove('auth_name');
     html.window.location.hash = '';
   }
 
@@ -486,7 +504,7 @@ class TopBar extends StatelessWidget {
                   icon: const Icon(Icons.logout),
                   label: const Text('Logout'),
                 )
-              : FilledButton(
+              : OutlinedButton.icon(
                   onPressed: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
@@ -494,7 +512,8 @@ class TopBar extends StatelessWidget {
                       ),
                     );
                   },
-                  child: const Text('Login'),
+                  icon: const Icon(Icons.admin_panel_settings),
+                  label: const Text('Admin Login'),
                 ),
         ),
       ],
