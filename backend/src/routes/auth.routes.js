@@ -12,4 +12,7 @@ router.get('/line/callback', controller.lineCallback);
 
 router.get('/me', controller.me);
 
+// Local admin login
+router.post('/admin-login', controller.adminLogin);
+
 module.exports = router;

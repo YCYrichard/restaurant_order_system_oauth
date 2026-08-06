@@ -5,7 +5,8 @@ CREATE TABLE users (
   provider VARCHAR(30) NOT NULL,
   provider_id VARCHAR(255) NOT NULL,
   avatar_url VARCHAR(255) NULL,
-  role ENUM('customer','staff','admin') DEFAULT 'customer',
+  role ENUM('customer', 'staff', 'admin') DEFAULT 'customer',
+  password_hash VARCHAR(255) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY unique_provider_user (provider, provider_id)
 );
@@ -35,4 +36,24 @@ CREATE TABLE products (
   is_active BOOLEAN DEFAULT TRUE,
   FOREIGN KEY (store_id) REFERENCES stores(id),
   FOREIGN KEY (category_id) REFERENCES categories(id)
+);
+
+-- Seed default superuser admin account
+INSERT INTO users (
+  name,
+  email,
+  provider,
+  provider_id,
+  avatar_url,
+  role,
+  password_hash
+)
+VALUES (
+  'supermao',
+  'supermao@example.com',
+  'local',
+  'supermao',
+  NULL,
+  'admin',
+  '$2b$10$9.QwCNCVzE/Za55pqr5ItuHTP.G6p/B3BiKLJBC/i2wpPXSRXzQR6'
 );

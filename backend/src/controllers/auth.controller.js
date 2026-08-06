@@ -1,7 +1,16 @@
-const axios = require('axios');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+
 const db = require('../config/db');
-const { buildGoogleAuthUrl, buildFacebookAuthUrl, buildLineAuthUrl } = require('../services/oauth.service');
+
+const {
+  buildGoogleAuthUrl,
+  buildFacebookAuthUrl,
+  buildLineAuthUrl,
+} = require('../services/oauth.service');
+
+const FRONTEND_URL =
+  process.env.FRONTEND_URL || 'http://localhost:5000';
 
 function signUser(user) {
   return jwt.sign(
@@ -10,149 +19,421 @@ function signUser(user) {
       name: user.name,
       email: user.email,
       provider: user.provider,
-      role: user.role || 'customer'
+      role: user.role || 'customer',
     },
     process.env.JWT_SECRET || 'change_me',
-    { expiresIn: '7d' }
+    {
+      expiresIn: '7d',
+    }
   );
 }
 
-async function upsertUser({ name, email, provider, providerId, avatarUrl = null }) {
-  const [rows] = await db.execute(
-    'SELECT * FROM users WHERE provider = ? AND provider_id = ? LIMIT 1',
+async function upsertUser({
+  name,
+  email,
+  provider,
+  providerId,
+  avatarUrl = null,
+}) {
+  const [existingRows] = await db.execute(
+    `
+      SELECT *
+      FROM users
+      WHERE provider = ?
+        AND provider_id = ?
+      LIMIT 1
+    `,
     [provider, providerId]
   );
 
-  if (rows.length) return rows[0];
+  if (existingRows.length > 0) {
+    const existingUser = existingRows[0];
 
-  const [result] = await db.execute(
-    'INSERT INTO users (name, email, provider, provider_id, avatar_url, role) VALUES (?, ?, ?, ?, ?, ?)',
-    [name || 'User', email || null, provider, providerId, avatarUrl, 'customer']
+    await db.execute(
+      `
+        UPDATE users
+        SET
+          name = ?,
+          email = ?,
+          avatar_url = ?
+        WHERE id = ?
+      `,
+      [
+        name || existingUser.name || 'User',
+        email || existingUser.email || null,
+        avatarUrl || existingUser.avatar_url || null,
+        existingUser.id,
+      ]
+    );
+
+    const [updatedRows] = await db.execute(
+      `
+        SELECT *
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [existingUser.id]
+    );
+
+    return updatedRows[0];
+  }
+
+  const [insertResult] = await db.execute(
+    `
+      INSERT INTO users (
+        name,
+        email,
+        provider,
+        provider_id,
+        avatar_url,
+        role
+      )
+      VALUES (?, ?, ?, ?, ?, ?)
+    `,
+    [
+      name || 'User',
+      email || null,
+      provider,
+      providerId,
+      avatarUrl,
+      'customer',
+    ]
   );
 
-  const [created] = await db.execute('SELECT * FROM users WHERE id = ? LIMIT 1', [result.insertId]);
-  return created[0];
+  const [createdRows] = await db.execute(
+    `
+      SELECT *
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+    `,
+    [insertResult.insertId]
+  );
+
+  return createdRows[0];
 }
 
-exports.googleLogin = async (_, res) => {
-  res.redirect(buildGoogleAuthUrl());
+function redirectToFrontend(token) {
+  return `${FRONTEND_URL}/#/auth-success?token=${encodeURIComponent(token)}`;
+}
+
+function getProviderId(profile) {
+  return (
+    profile.id ||
+    profile.sub ||
+    profile.userId ||
+    profile.user_id ||
+    null
+  );
+}
+
+function getProfileName(profile) {
+  return (
+    profile.name ||
+    profile.displayName ||
+    profile.display_name ||
+    profile.username ||
+    'User'
+  );
+}
+
+function getProfileEmail(profile) {
+  return profile.email || profile.emailAddress || null;
+}
+
+function getProfileAvatar(profile) {
+  return (
+    profile.avatar_url ||
+    profile.avatarUrl ||
+    profile.picture ||
+    profile.profile_image_url ||
+    null
+  );
+}
+
+exports.googleLogin = async (req, res) => {
+  try {
+    const authUrl = buildGoogleAuthUrl();
+    return res.redirect(authUrl);
+  } catch (error) {
+    console.error('Google login error:', error);
+    return res.status(500).json({
+      message: 'Unable to start Google login',
+    });
+  }
 };
 
 exports.googleCallback = async (req, res) => {
   try {
-    const code = req.query.code;
-    if (!code) return res.status(400).json({ message: 'Missing code' });
+    const profile = req.user;
 
-    const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
-      code,
-      client_id: process.env.GOOGLE_CLIENT_ID,
-      client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: process.env.GOOGLE_REDIRECT_URI,
-      grant_type: 'authorization_code'
-    }, { headers: { 'Content-Type': 'application/json' } });
+    if (!profile) {
+      return res.status(401).json({
+        message: 'Google user profile was not found',
+      });
+    }
 
-    const accessToken = tokenResponse.data.access_token;
-    const userInfo = await axios.get('https://www.googleapis.com/oauth2/v2/userinfo', {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    });
+    const providerId = getProviderId(profile);
+
+    if (!providerId) {
+      return res.status(400).json({
+        message: 'Google profile does not contain a provider ID',
+      });
+    }
 
     const user = await upsertUser({
-      name: userInfo.data.name,
-      email: userInfo.data.email,
+      name: getProfileName(profile),
+      email: getProfileEmail(profile),
       provider: 'google',
-      providerId: String(userInfo.data.id),
-      avatarUrl: userInfo.data.picture || null
+      providerId,
+      avatarUrl: getProfileAvatar(profile),
     });
 
     const token = signUser(user);
-    res.redirect(`${process.env.FRONTEND_URL}/#/auth-success?token=${token}`);
+
+    return res.redirect(redirectToFrontend(token));
   } catch (error) {
-    res.status(500).json({ message: 'Google login failed', error: error.response?.data || error.message });
+    console.error('Google callback error:', error);
+    return res.status(500).json({
+      message: 'Google login failed',
+    });
   }
 };
 
-exports.facebookLogin = async (_, res) => {
-  res.redirect(buildFacebookAuthUrl());
+exports.facebookLogin = async (req, res) => {
+  try {
+    const authUrl = buildFacebookAuthUrl();
+    return res.redirect(authUrl);
+  } catch (error) {
+    console.error('Facebook login error:', error);
+    return res.status(500).json({
+      message: 'Unable to start Facebook login',
+    });
+  }
 };
 
 exports.facebookCallback = async (req, res) => {
   try {
-    const code = req.query.code;
-    if (!code) return res.status(400).json({ message: 'Missing code' });
+    const profile = req.user;
 
-    const tokenResponse = await axios.get('https://graph.facebook.com/v20.0/oauth/access_token', {
-      params: {
-        client_id: process.env.FACEBOOK_CLIENT_ID,
-        client_secret: process.env.FACEBOOK_CLIENT_SECRET,
-        redirect_uri: process.env.FACEBOOK_REDIRECT_URI,
-        code
-      }
-    });
+    if (!profile) {
+      return res.status(401).json({
+        message: 'Facebook user profile was not found',
+      });
+    }
 
-    const accessToken = tokenResponse.data.access_token;
-    const userInfo = await axios.get('https://graph.facebook.com/me', {
-      params: {
-        fields: 'id,name,email,picture',
-        access_token: accessToken
-      }
-    });
+    const providerId = getProviderId(profile);
+
+    if (!providerId) {
+      return res.status(400).json({
+        message: 'Facebook profile does not contain a provider ID',
+      });
+    }
 
     const user = await upsertUser({
-      name: userInfo.data.name,
-      email: userInfo.data.email || null,
+      name: getProfileName(profile),
+      email: getProfileEmail(profile),
       provider: 'facebook',
-      providerId: String(userInfo.data.id),
-      avatarUrl: userInfo.data.picture?.data?.url || null
+      providerId,
+      avatarUrl: getProfileAvatar(profile),
     });
 
     const token = signUser(user);
-    res.redirect(`${process.env.FRONTEND_URL}/#/auth-success?token=${token}`);
+
+    return res.redirect(redirectToFrontend(token));
   } catch (error) {
-    res.status(500).json({ message: 'Facebook login failed', error: error.response?.data || error.message });
+    console.error('Facebook callback error:', error);
+    return res.status(500).json({
+      message: 'Facebook login failed',
+    });
   }
 };
 
-exports.lineLogin = async (_, res) => {
-  res.redirect(buildLineAuthUrl());
+exports.lineLogin = async (req, res) => {
+  try {
+    const authUrl = buildLineAuthUrl();
+    return res.redirect(authUrl);
+  } catch (error) {
+    console.error('LINE login error:', error);
+    return res.status(500).json({
+      message: 'Unable to start LINE login',
+    });
+  }
 };
 
 exports.lineCallback = async (req, res) => {
   try {
-    const code = req.query.code;
-    if (!code) return res.status(400).json({ message: 'Missing code' });
+    const profile = req.user;
 
-    const body = new URLSearchParams({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: process.env.LINE_REDIRECT_URI,
-      client_id: process.env.LINE_CLIENT_ID,
-      client_secret: process.env.LINE_CLIENT_SECRET
-    });
+    if (!profile) {
+      return res.status(401).json({
+        message: 'LINE user profile was not found',
+      });
+    }
 
-    const tokenResponse = await axios.post('https://api.line.me/oauth2/v2.1/token', body.toString(), {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-    });
+    const providerId = getProviderId(profile);
 
-    const accessToken = tokenResponse.data.access_token;
-    const profile = await axios.get('https://api.line.me/v2/profile', {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    });
+    if (!providerId) {
+      return res.status(400).json({
+        message: 'LINE profile does not contain a provider ID',
+      });
+    }
 
     const user = await upsertUser({
-      name: profile.data.displayName,
-      email: null,
+      name: getProfileName(profile),
+      email: getProfileEmail(profile),
       provider: 'line',
-      providerId: String(profile.data.userId),
-      avatarUrl: profile.data.pictureUrl || null
+      providerId,
+      avatarUrl: getProfileAvatar(profile),
     });
 
     const token = signUser(user);
-    res.redirect(`${process.env.FRONTEND_URL}/#/auth-success?token=${token}`);
+
+    return res.redirect(redirectToFrontend(token));
   } catch (error) {
-    res.status(500).json({ message: 'LINE login failed', error: error.response?.data || error.message });
+    console.error('LINE callback error:', error);
+    return res.status(500).json({
+      message: 'LINE login failed',
+    });
+  }
+};
+
+exports.adminLogin = async (req, res) => {
+  try {
+    const username =
+      typeof req.body.username === 'string'
+        ? req.body.username.trim()
+        : '';
+
+    const password =
+      typeof req.body.password === 'string'
+        ? req.body.password
+        : '';
+
+    if (!username || !password) {
+      return res.status(400).json({
+        message: 'Username and password are required',
+      });
+    }
+
+    const [rows] = await db.execute(
+      `
+        SELECT *
+        FROM users
+        WHERE provider = 'local'
+          AND provider_id = ?
+          AND role = 'admin'
+        LIMIT 1
+      `,
+      [username]
+    );
+
+    if (rows.length === 0) {
+      return res.status(401).json({
+        message: 'Invalid admin credentials',
+      });
+    }
+
+    const user = rows[0];
+
+    if (!user.password_hash) {
+      return res.status(500).json({
+        message: 'This admin account does not have a password configured',
+      });
+    }
+
+    const passwordMatches = await bcrypt.compare(
+      password,
+      user.password_hash
+    );
+
+    if (!passwordMatches) {
+      return res.status(401).json({
+        message: 'Invalid admin credentials',
+      });
+    }
+
+    const token = signUser(user);
+
+    return res.status(200).json({
+      message: 'Admin login successful',
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        provider: user.provider,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    console.error('Admin login error:', error);
+
+    return res.status(500).json({
+      message: 'Admin login failed',
+    });
   }
 };
 
 exports.me = async (req, res) => {
-  res.json({ message: 'Use token returned from auth-success route in frontend.' });
+  try {
+    const authorization = req.headers.authorization || '';
+
+    if (!authorization.startsWith('Bearer ')) {
+      return res.status(401).json({
+        message: 'Authorization token is required',
+      });
+    }
+
+    const token = authorization.substring('Bearer '.length);
+
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET || 'change_me'
+    );
+
+    const [rows] = await db.execute(
+      `
+        SELECT
+          id,
+          name,
+          email,
+          provider,
+          provider_id,
+          avatar_url,
+          role,
+          created_at
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [decoded.id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        message: 'User not found',
+      });
+    }
+
+    return res.status(200).json({
+      user: rows[0],
+    });
+  } catch (error) {
+    console.error('Get current user error:', error);
+
+    if (
+      error.name === 'JsonWebTokenError' ||
+      error.name === 'TokenExpiredError'
+    ) {
+      return res.status(401).json({
+        message: 'Invalid or expired token',
+      });
+    }
+
+    return res.status(500).json({
+      message: 'Unable to load current user',
+    });
+  }
 };

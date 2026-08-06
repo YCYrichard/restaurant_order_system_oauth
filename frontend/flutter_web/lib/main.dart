@@ -2,16 +2,14 @@
 
 import 'dart:html' as html;
 import 'package:flutter/material.dart';
-import 'pages/checkout_page.dart';
+
+import 'admin_login_page.dart';
+import 'admin_page.dart';
+import 'jwt_decode.dart';
 
 void main() {
   runApp(const MyApp());
 }
-
-const String apiBaseUrl = String.fromEnvironment(
-  'API_BASE_URL',
-  defaultValue: 'http://localhost:3000',
-);
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -26,15 +24,59 @@ class MyApp extends StatelessWidget {
         colorSchemeSeed: Colors.deepOrange,
         scaffoldBackgroundColor: const Color(0xFFFFFBF7),
       ),
-      home: const HomePage(),
+      home: const RoleRouterPage(),
     );
   }
 }
 
-/// Product model with both frontend id and MySQL dbProductId.
+class RoleRouterPage extends StatefulWidget {
+  const RoleRouterPage({super.key});
+
+  @override
+  State<RoleRouterPage> createState() => _RoleRouterPageState();
+}
+
+class _RoleRouterPageState extends State<RoleRouterPage> {
+  String? token;
+  JwtPayload? payload;
+
+  @override
+  void initState() {
+    super.initState();
+    _readTokenFromUrl();
+  }
+
+  void _readTokenFromUrl() {
+    final hash = html.window.location.hash;
+    if (hash.startsWith('#/auth-success')) {
+      final uri = Uri.tryParse(hash.replaceFirst('#', ''));
+      final extractedToken = uri?.queryParameters['token'];
+      if (extractedToken != null && extractedToken.isNotEmpty) {
+        setState(() {
+          token = extractedToken;
+          payload = JwtPayload.fromToken(extractedToken);
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (token == null || payload == null) {
+      return const HomePage();
+    }
+
+    if (payload!.role == 'admin') {
+      return const AdminPage();
+    }
+
+    return const HomePage();
+  }
+}
+
 class Product {
-  final String id;        // frontend ID (e.g. "burger_1")
-  final int dbProductId;  // MySQL products.id
+  final String id;
+  final int dbProductId;
   final String name;
   final String category;
   final double price;
@@ -295,9 +337,9 @@ class _HomePageState extends State<HomePage> {
               isLoggedIn: isLoggedIn,
               token: token,
               message: userMessage,
-              onGoogle: () => _open('$apiBaseUrl/auth/google'),
-              onFacebook: () => _open('$apiBaseUrl/auth/facebook'),
-              onLine: () => _open('$apiBaseUrl/auth/line'),
+              onGoogle: () => _open('http://localhost:3000/auth/google'),
+              onFacebook: () => _open('http://localhost:3000/auth/facebook'),
+              onLine: () => _open('http://localhost:3000/auth/line'),
               onLogout: _logout,
             ),
             const StoreInfoSection(),
@@ -327,24 +369,16 @@ class _HomePageState extends State<HomePage> {
   void _scrollToSection(String section) {
     switch (section) {
       case 'login':
-        html.document
-            .getElementById('login-section')
-            ?.scrollIntoView(html.ScrollAlignment.TOP);
+        html.document.getElementById('login-section')?.scrollIntoView();
         break;
       case 'menu':
-        html.document
-            .getElementById('menu-section')
-            ?.scrollIntoView(html.ScrollAlignment.TOP);
+        html.document.getElementById('menu-section')?.scrollIntoView();
         break;
       case 'store':
-        html.document
-            .getElementById('store-section')
-            ?.scrollIntoView(html.ScrollAlignment.TOP);
+        html.document.getElementById('store-section')?.scrollIntoView();
         break;
       case 'cart':
-        html.document
-            .getElementById('cart-section')
-            ?.scrollIntoView(html.ScrollAlignment.TOP);
+        html.document.getElementById('cart-section')?.scrollIntoView();
         break;
     }
   }
@@ -453,7 +487,13 @@ class TopBar extends StatelessWidget {
                   label: const Text('Logout'),
                 )
               : FilledButton(
-                  onPressed: onLoginTap,
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const AdminLoginPage(),
+                      ),
+                    );
+                  },
                   child: const Text('Login'),
                 ),
         ),
@@ -628,8 +668,8 @@ class _HeroText extends StatelessWidget {
           spacing: 16,
           runSpacing: 16,
           children: [
-            const _MiniStat(label: 'Providers', value: '3'),
-            const _MiniStat(label: 'Categories', value: '4'),
+            _MiniStat(label: 'Providers', value: '3'),
+            _MiniStat(label: 'Categories', value: '4'),
             _MiniStat(label: 'Cart Items', value: '$cartItemCount'),
           ],
         ),
@@ -692,8 +732,8 @@ class _HeroHighlightCard extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
-        children: const [
+      child: const Column(
+        children: [
           _PreviewItem(
             icon: Icons.local_fire_department,
             title: 'Hot Deals',
@@ -1493,7 +1533,8 @@ class OrderStepsSection extends StatelessWidget {
             _StepCard(
               number: '03',
               title: 'Checkout',
-              description: 'Confirm store, order details, and payment flow later.',
+              description:
+                  'Confirm store, order details, and payment flow later.',
             ),
           ];
 
@@ -1692,6 +1733,141 @@ class _SectionContainer extends StatelessWidget {
                 const SizedBox(height: 22),
                 child,
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class CheckoutPage extends StatelessWidget {
+  final Map<String, int> cart;
+  final List<Product> products;
+  final String? token;
+
+  const CheckoutPage({
+    super.key,
+    required this.cart,
+    required this.products,
+    this.token,
+  });
+
+  Product getProductById(String productId) {
+    return products.firstWhere((p) => p.id == productId);
+  }
+
+  double get cartTotal {
+    double total = 0;
+    for (final entry in cart.entries) {
+      final product = getProductById(entry.key);
+      total += product.price * entry.value;
+    }
+    return total;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        elevation: 0,
+        title: const Text('Checkout'),
+      ),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 600),
+          child: Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Order Summary',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  ...cart.entries.map((entry) {
+                    final product = getProductById(entry.key);
+                    final qty = entry.value;
+                    final lineTotal = product.price * qty;
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  product.name,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Qty: $qty × \$${product.price.toStringAsFixed(2)}',
+                                  style: const TextStyle(
+                                    color: Color(0xFF625D5A),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Text(
+                            '\$${lineTotal.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: Colors.deepOrange,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                  const Divider(),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Total',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        '\$${cartTotal.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.deepOrange,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                    },
+                    icon: const Icon(Icons.arrow_back),
+                    label: const Text('Back to Menu'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
