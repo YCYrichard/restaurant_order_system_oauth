@@ -1,17 +1,12 @@
-// ignore_for_file: deprecated_member_use
-
 import 'dart:convert';
-import 'dart:html' as html;
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:web/web.dart' as web;
 
 import 'admin_page.dart';
+import 'core/constants/app_config.dart';
 import 'jwt_decode.dart';
-
-const String apiBaseUrl = String.fromEnvironment(
-  'API_BASE_URL',
-  defaultValue: 'http://localhost:3000',
-);
 
 class AdminLoginPage extends StatefulWidget {
   const AdminLoginPage({super.key});
@@ -66,23 +61,21 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
     });
 
     try {
-      final request = await html.HttpRequest.request(
-        '$apiBaseUrl/auth/admin-login',
-        method: 'POST',
-        requestHeaders: {
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/auth/admin-login'),
+        headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        sendData: jsonEncode({
+        body: jsonEncode({
           'username': username,
           'password': password,
         }),
       );
 
-      final responseText = request.responseText ?? '{}';
-      final decodedResponse = jsonDecode(responseText);
+      final decodedResponse = jsonDecode(response.body);
 
-      if (request.status != 200) {
+      if (response.statusCode != 200) {
         final errorMessage = decodedResponse is Map &&
                 decodedResponse['message'] != null
             ? decodedResponse['message'].toString()
@@ -123,9 +116,9 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
         return;
       }
 
-      html.window.localStorage['auth_token'] = token;
-      html.window.localStorage['auth_role'] = payload.role ?? 'admin';
-      html.window.localStorage['auth_name'] = payload.name ?? username;
+      web.window.localStorage.setItem('auth_token', token);
+      web.window.localStorage.setItem('auth_role', payload.role ?? 'admin');
+      web.window.localStorage.setItem('auth_name', payload.name ?? username);
 
       if (!mounted) {
         return;
@@ -172,7 +165,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
       return;
     }
 
-    html.window.location.hash = '';
+    web.window.location.hash = '';
   }
 
   @override
@@ -214,7 +207,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                           width: 72,
                           height: 72,
                           decoration: BoxDecoration(
-                            color: Colors.deepOrange.withOpacity(0.12),
+                            color: Colors.deepOrange.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: const Icon(

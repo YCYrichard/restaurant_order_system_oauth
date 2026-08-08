@@ -1,15 +1,10 @@
-// ignore_for_file: deprecated_member_use
-
 import 'dart:convert';
-import 'dart:html' as html;
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:web/web.dart' as web;
+import '../core/constants/app_config.dart';
 import '../jwt_decode.dart';
-import '../main.dart';
-
-const String apiBaseUrl = String.fromEnvironment(
-  'API_BASE_URL',
-  defaultValue: 'http://localhost:3000',
-);
+import '../models/product.dart';
 
 class CheckoutPage extends StatefulWidget {
   final Map<String, int> cart;
@@ -107,15 +102,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
     };
 
     try {
-      final request = await html.HttpRequest.request(
-        '$apiBaseUrl/orders',
-        method: 'POST',
-        requestHeaders: {'Content-Type': 'application/json'},
-        sendData: jsonEncode(body),
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/orders'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
       );
 
-      if (request.status == 201 || request.status == 200) {
-        final data = jsonDecode(request.responseText ?? '{}');
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        final data = jsonDecode(response.body);
         setState(() {
           _isSubmitting = false;
           _orderId = data['order']?['id']?.toString();
@@ -471,7 +465,7 @@ class _OrderSuccessSection extends StatelessWidget {
                     const SizedBox(height: 24),
                     FilledButton.icon(
                       onPressed: () {
-                        html.window.location.href = '/';
+                        web.window.location.href = '/';
                       },
                       icon: const Icon(Icons.home),
                       label: const Text('Back to Home'),

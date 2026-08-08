@@ -1,16 +1,11 @@
-// ignore_for_file: deprecated_member_use
-
 import 'dart:convert';
-import 'dart:html' as html;
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:web/web.dart' as web;
 
 import 'admin_login_page.dart';
-
-const String apiBaseUrl = String.fromEnvironment(
-  'API_BASE_URL',
-  defaultValue: 'http://localhost:3000',
-);
+import 'core/constants/app_config.dart';
 
 class AdminPage extends StatefulWidget {
   const AdminPage({super.key});
@@ -40,7 +35,7 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   String? get _token {
-    return html.window.localStorage['auth_token'];
+    return web.window.localStorage.getItem('auth_token');
   }
 
   Map<String, String> _headers({
@@ -89,9 +84,9 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   void _handleUnauthorized() {
-    html.window.localStorage.remove('auth_token');
-    html.window.localStorage.remove('auth_role');
-    html.window.localStorage.remove('auth_name');
+    web.window.localStorage.removeItem('auth_token');
+    web.window.localStorage.removeItem('auth_role');
+    web.window.localStorage.removeItem('auth_name');
 
     if (!mounted) return;
 
@@ -143,27 +138,26 @@ class _AdminPageState extends State<AdminPage> {
     });
 
     try {
-      final request = await html.HttpRequest.request(
-        '$apiBaseUrl/stores',
-        method: 'GET',
-        requestHeaders: _headers(),
+      final response = await http.get(
+        Uri.parse('$apiBaseUrl/stores'),
+        headers: _headers(),
       );
 
-      if (_isUnauthorized(request.status)) {
+      if (_isUnauthorized(response.statusCode)) {
         _handleUnauthorized();
         return;
       }
 
-      if (request.status != 200) {
+      if (response.statusCode != 200) {
         _showMessage(
-          'Failed to load stores: ${request.responseText}',
+          'Failed to load stores: ${response.body}',
           isError: true,
         );
         return;
       }
 
       final loadedStores = _decodeList(
-        request.responseText ?? '{}',
+        response.body,
         'stores',
       );
 
@@ -233,27 +227,26 @@ class _AdminPageState extends State<AdminPage> {
     });
 
     try {
-      final request = await html.HttpRequest.request(
-        '$apiBaseUrl/products/store/$storeId',
-        method: 'GET',
-        requestHeaders: _headers(),
+      final response = await http.get(
+        Uri.parse('$apiBaseUrl/products/store/$storeId'),
+        headers: _headers(),
       );
 
-      if (_isUnauthorized(request.status)) {
+      if (_isUnauthorized(response.statusCode)) {
         _handleUnauthorized();
         return;
       }
 
-      if (request.status != 200) {
+      if (response.statusCode != 200) {
         _showMessage(
-          'Failed to load products: ${request.responseText}',
+          'Failed to load products: ${response.body}',
           isError: true,
         );
         return;
       }
 
       final loadedProducts = _decodeList(
-        request.responseText ?? '{}',
+        response.body,
         'products',
       );
 
@@ -291,25 +284,24 @@ class _AdminPageState extends State<AdminPage> {
     });
 
     try {
-      final request = await html.HttpRequest.request(
-        '$apiBaseUrl/stores',
-        method: 'POST',
-        requestHeaders: _headers(json: true),
-        sendData: jsonEncode({
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/stores'),
+        headers: _headers(json: true),
+        body: jsonEncode({
           'name': name.trim(),
           'address': address.trim(),
           'phone': phone.trim(),
         }),
       );
 
-      if (_isUnauthorized(request.status)) {
+      if (_isUnauthorized(response.statusCode)) {
         _handleUnauthorized();
         return;
       }
 
-      if (request.status != 201) {
+      if (response.statusCode != 201) {
         _showMessage(
-          'Failed to create store: ${request.responseText}',
+          'Failed to create store: ${response.body}',
           isError: true,
         );
         return;
@@ -350,25 +342,24 @@ class _AdminPageState extends State<AdminPage> {
     });
 
     try {
-      final request = await html.HttpRequest.request(
-        '$apiBaseUrl/stores/$storeId',
-        method: 'PUT',
-        requestHeaders: _headers(json: true),
-        sendData: jsonEncode({
+      final response = await http.put(
+        Uri.parse('$apiBaseUrl/stores/$storeId'),
+        headers: _headers(json: true),
+        body: jsonEncode({
           'name': name.trim(),
           'address': address.trim(),
           'phone': phone.trim(),
         }),
       );
 
-      if (_isUnauthorized(request.status)) {
+      if (_isUnauthorized(response.statusCode)) {
         _handleUnauthorized();
         return;
       }
 
-      if (request.status != 200) {
+      if (response.statusCode != 200) {
         _showMessage(
-          'Failed to update store: ${request.responseText}',
+          'Failed to update store: ${response.body}',
           isError: true,
         );
         return;
@@ -395,23 +386,22 @@ class _AdminPageState extends State<AdminPage> {
     required bool isActive,
   }) async {
     try {
-      final request = await html.HttpRequest.request(
-        '$apiBaseUrl/stores/$storeId/status',
-        method: 'PATCH',
-        requestHeaders: _headers(json: true),
-        sendData: jsonEncode({
+      final response = await http.patch(
+        Uri.parse('$apiBaseUrl/stores/$storeId/status'),
+        headers: _headers(json: true),
+        body: jsonEncode({
           'isActive': isActive,
         }),
       );
 
-      if (_isUnauthorized(request.status)) {
+      if (_isUnauthorized(response.statusCode)) {
         _handleUnauthorized();
         return;
       }
 
-      if (request.status != 200) {
+      if (response.statusCode != 200) {
         _showMessage(
-          'Failed to update store status: ${request.responseText}',
+          'Failed to update store status: ${response.body}',
           isError: true,
         );
         return;
@@ -452,25 +442,24 @@ class _AdminPageState extends State<AdminPage> {
     });
 
     try {
-      final request = await html.HttpRequest.request(
-        '$apiBaseUrl/products/store/$storeId',
-        method: 'POST',
-        requestHeaders: _headers(json: true),
-        sendData: jsonEncode({
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/products/store/$storeId'),
+        headers: _headers(json: true),
+        body: jsonEncode({
           'name': name.trim(),
           'description': description.trim(),
           'price': price,
         }),
       );
 
-      if (_isUnauthorized(request.status)) {
+      if (_isUnauthorized(response.statusCode)) {
         _handleUnauthorized();
         return;
       }
 
-      if (request.status != 201) {
+      if (response.statusCode != 201) {
         _showMessage(
-          'Failed to create product: ${request.responseText}',
+          'Failed to create product: ${response.body}',
           isError: true,
         );
         return;
@@ -503,25 +492,24 @@ class _AdminPageState extends State<AdminPage> {
     });
 
     try {
-      final request = await html.HttpRequest.request(
-        '$apiBaseUrl/products/$productId',
-        method: 'PUT',
-        requestHeaders: _headers(json: true),
-        sendData: jsonEncode({
+      final response = await http.put(
+        Uri.parse('$apiBaseUrl/products/$productId'),
+        headers: _headers(json: true),
+        body: jsonEncode({
           'name': name.trim(),
           'description': description.trim(),
           'price': price,
         }),
       );
 
-      if (_isUnauthorized(request.status)) {
+      if (_isUnauthorized(response.statusCode)) {
         _handleUnauthorized();
         return;
       }
 
-      if (request.status != 200) {
+      if (response.statusCode != 200) {
         _showMessage(
-          'Failed to update product: ${request.responseText}',
+          'Failed to update product: ${response.body}',
           isError: true,
         );
         return;
@@ -548,23 +536,22 @@ class _AdminPageState extends State<AdminPage> {
     required bool isActive,
   }) async {
     try {
-      final request = await html.HttpRequest.request(
-        '$apiBaseUrl/products/$productId/status',
-        method: 'PATCH',
-        requestHeaders: _headers(json: true),
-        sendData: jsonEncode({
+      final response = await http.patch(
+        Uri.parse('$apiBaseUrl/products/$productId/status'),
+        headers: _headers(json: true),
+        body: jsonEncode({
           'isActive': isActive,
         }),
       );
 
-      if (_isUnauthorized(request.status)) {
+      if (_isUnauthorized(response.statusCode)) {
         _handleUnauthorized();
         return;
       }
 
-      if (request.status != 200) {
+      if (response.statusCode != 200) {
         _showMessage(
-          'Failed to update product status: ${request.responseText}',
+          'Failed to update product status: ${response.body}',
           isError: true,
         );
         return;
@@ -1013,9 +1000,9 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   void _logout() {
-    html.window.localStorage.remove('auth_token');
-    html.window.localStorage.remove('auth_role');
-    html.window.localStorage.remove('auth_name');
+    web.window.localStorage.removeItem('auth_token');
+    web.window.localStorage.removeItem('auth_role');
+    web.window.localStorage.removeItem('auth_name');
 
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(
@@ -1143,7 +1130,7 @@ class _AdminPageState extends State<AdminPage> {
 
   Widget _buildHeader() {
     final adminName =
-        html.window.localStorage['auth_name'] ?? 'Administrator';
+        web.window.localStorage.getItem('auth_name') ?? 'Administrator';
 
     return Container(
       width: double.infinity,
@@ -1163,7 +1150,7 @@ class _AdminPageState extends State<AdminPage> {
         children: [
           CircleAvatar(
             radius: 30,
-            backgroundColor: Colors.deepOrange.withOpacity(0.14),
+            backgroundColor: Colors.deepOrange.withValues(alpha: 0.14),
             child: const Icon(
               Icons.admin_panel_settings,
               color: Colors.deepOrange,
@@ -1327,8 +1314,8 @@ class _AdminPageState extends State<AdminPage> {
             children: [
               CircleAvatar(
                 backgroundColor: isActive
-                    ? Colors.green.withOpacity(0.12)
-                    : Colors.grey.withOpacity(0.14),
+                    ? Colors.green.withValues(alpha: 0.12)
+                    : Colors.grey.withValues(alpha: 0.14),
                 child: Icon(
                   Icons.store,
                   color: isActive ? Colors.green : Colors.grey,
@@ -1514,8 +1501,8 @@ class _AdminPageState extends State<AdminPage> {
           children: [
             CircleAvatar(
               backgroundColor: isActive
-                  ? Colors.deepOrange.withOpacity(0.12)
-                  : Colors.grey.withOpacity(0.14),
+                  ? Colors.deepOrange.withValues(alpha: 0.12)
+                  : Colors.grey.withValues(alpha: 0.14),
               child: Icon(
                 Icons.fastfood,
                 color: isActive ? Colors.deepOrange : Colors.grey,
