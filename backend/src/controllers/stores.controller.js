@@ -111,6 +111,36 @@ exports.listStores = async (req, res) => {
   }
 };
 
+// Public listing used by the customer-facing ordering page.
+// Deliberately unauthenticated and limited to the fields a customer
+// needs to pick a store — no product counts, owner info, or inactive stores.
+exports.listPublicStores = async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      `
+        SELECT
+          id,
+          name,
+          address,
+          phone
+        FROM stores
+        WHERE is_active = TRUE
+        ORDER BY name ASC
+      `
+    );
+
+    return res.status(200).json({
+      stores: rows,
+    });
+  } catch (error) {
+    console.error('List public stores error:', error);
+
+    return res.status(500).json({
+      message: 'Failed to list stores',
+    });
+  }
+};
+
 exports.getStore = async (req, res) => {
   try {
     const storeId = Number(req.params.storeId);

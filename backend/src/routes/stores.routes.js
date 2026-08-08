@@ -21,6 +21,14 @@ router.post(
   controller.createStore
 );
 
+// Public, unauthenticated listing for the customer-facing store picker.
+// Must be registered before '/:storeId' or Express will treat "public"
+// as a storeId value.
+router.get(
+  '/public',
+  controller.listPublicStores
+);
+
 router.get(
   '/:storeId',
   requireAuth,

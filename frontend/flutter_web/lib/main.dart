@@ -1,11 +1,18 @@
 // ignore_for_file: deprecated_member_use
 
+import 'dart:convert';
 import 'dart:html' as html;
 import 'package:flutter/material.dart';
 
 import 'admin_login_page.dart';
 import 'admin_page.dart';
 import 'jwt_decode.dart';
+import 'pages/checkout_page.dart';
+
+const String apiBaseUrl = String.fromEnvironment(
+  'API_BASE_URL',
+  defaultValue: 'http://localhost:3000',
+);
 
 void main() {
   runApp(const MyApp());
@@ -117,6 +124,10 @@ class _HomePageState extends State<HomePage> {
   String? token;
   String? userMessage;
 
+  List<Map<String, dynamic>> stores = [];
+  int? selectedStoreId;
+  bool _loadingStores = false;
+
   final List<Product> products = const [
     Product(
       id: 'burger_1',
@@ -198,6 +209,60 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _readAuthFromUrl();
+    _loadStores();
+  }
+
+  Future<void> _loadStores() async {
+    setState(() {
+      _loadingStores = true;
+    });
+
+    try {
+      final request = await html.HttpRequest.request(
+        '$apiBaseUrl/stores/public',
+        method: 'GET',
+        requestHeaders: {'Accept': 'application/json'},
+      );
+
+      if (request.status != 200) {
+        setState(() {
+          _loadingStores = false;
+        });
+        return;
+      }
+
+      final decoded = jsonDecode(request.responseText ?? '{}');
+
+      final loadedStores = decoded is Map && decoded['stores'] is List
+          ? List<Map<String, dynamic>>.from(
+              (decoded['stores'] as List)
+                  .whereType<Map>()
+                  .map((item) => Map<String, dynamic>.from(item)),
+            )
+          : <Map<String, dynamic>>[];
+
+      setState(() {
+        stores = loadedStores;
+
+        if (selectedStoreId == null && loadedStores.isNotEmpty) {
+          selectedStoreId = int.tryParse(loadedStores.first['id'].toString());
+        }
+
+        _loadingStores = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loadingStores = false;
+        });
+      }
+    }
+  }
+
+  void _selectStore(int storeId) {
+    setState(() {
+      selectedStoreId = storeId;
+    });
   }
 
   void _readAuthFromUrl() {
@@ -312,12 +377,23 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    if (selectedStoreId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a store before checking out.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => CheckoutPage(
           cart: Map<String, int>.from(cart),
           products: products,
           token: token,
+          storeId: selectedStoreId!,
         ),
       ),
     );
@@ -360,7 +436,12 @@ class _HomePageState extends State<HomePage> {
               onLine: () => _open('http://localhost:3000/auth/line'),
               onLogout: _logout,
             ),
-            const StoreInfoSection(),
+            StoreSelectorSection(
+              stores: stores,
+              selectedStoreId: selectedStoreId,
+              isLoading: _loadingStores,
+              onSelectStore: _selectStore,
+            ),
             MenuProductsSection(
               groupedProducts: groupedProducts,
               cart: cart,
@@ -978,113 +1059,181 @@ class _SocialButton extends StatelessWidget {
   }
 }
 
-class StoreInfoSection extends StatelessWidget {
-  const StoreInfoSection({super.key});
+class StoreSelectorSection extends StatelessWidget {
+  final List<Map<String, dynamic>> stores;
+  final int? selectedStoreId;
+  final bool isLoading;
+  final void Function(int storeId) onSelectStore;
+
+  const StoreSelectorSection({
+    super.key,
+    required this.stores,
+    required this.selectedStoreId,
+    required this.isLoading,
+    required this.onSelectStore,
+  });
 
   @override
   Widget build(BuildContext context) {
     return _SectionContainer(
       sectionId: 'store-section',
-      title: 'Store information',
-      subtitle: 'Simple business details customers usually need before ordering.',
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final isWide = constraints.maxWidth > 700;
-          final children = const [
-            _InfoCard(
-              icon: Icons.location_on_outlined,
-              title: 'Address',
-              value: 'Taoyuan City Demo Store, Zhongli District',
-            ),
-            _InfoCard(
-              icon: Icons.access_time_outlined,
-              title: 'Hours',
-              value: 'Mon - Sun • 10:00 AM - 9:30 PM',
-            ),
-            _InfoCard(
-              icon: Icons.call_outlined,
-              title: 'Phone',
-              value: '+886 3 123 4567',
-            ),
-          ];
+      title: 'Choose a store',
+      subtitle:
+          'Pick which store location you want to order from. Your order will be sent to that store.',
+      child: isLoading
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          : stores.isEmpty
+              ? Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF7F7F7),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    'No stores are available for ordering right now.',
+                    style: TextStyle(color: Color(0xFF625D5A)),
+                  ),
+                )
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isWide = constraints.maxWidth > 700;
 
-          if (isWide) {
-            return Row(
-              children: children
-                  .map((e) => Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          child: e,
-                        ),
-                      ))
-                  .toList(),
-            );
-          }
+                    final cards = stores.map((store) {
+                      final storeId = int.tryParse(store['id'].toString());
+                      final isSelected =
+                          storeId != null && storeId == selectedStoreId;
 
-          return Column(
-            children: children
-                .map((e) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: e,
-                    ))
-                .toList(),
-          );
-        },
-      ),
+                      return _StoreCard(
+                        name: store['name']?.toString() ?? 'Unnamed store',
+                        address: store['address']?.toString(),
+                        phone: store['phone']?.toString(),
+                        isSelected: isSelected,
+                        onTap: storeId == null
+                            ? null
+                            : () => onSelectStore(storeId),
+                      );
+                    }).toList();
+
+                    if (isWide) {
+                      return Row(
+                        children: cards
+                            .map(
+                              (card) => Expanded(
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 8),
+                                  child: card,
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      );
+                    }
+
+                    return Column(
+                      children: cards
+                          .map(
+                            (card) => Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: card,
+                            ),
+                          )
+                          .toList(),
+                    );
+                  },
+                ),
     );
   }
 }
 
-class _InfoCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String value;
+class _StoreCard extends StatelessWidget {
+  final String name;
+  final String? address;
+  final String? phone;
+  final bool isSelected;
+  final VoidCallback? onTap;
 
-  const _InfoCard({
-    required this.icon,
-    required this.title,
-    required this.value,
+  const _StoreCard({
+    required this.name,
+    required this.address,
+    required this.phone,
+    required this.isSelected,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: Colors.white,
+      color: isSelected ? const Color(0xFFFFF3EB) : Colors.white,
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 24,
-              backgroundColor: Colors.orange.withOpacity(0.12),
-              child: Icon(icon, color: Colors.deepOrange),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    value,
-                    style: const TextStyle(
-                      color: Color(0xFF625D5A),
-                      height: 1.5,
-                    ),
-                  ),
-                ],
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+        side: BorderSide(
+          color: isSelected ? Colors.deepOrange : const Color(0xFFEDEDED),
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: isSelected
+                    ? Colors.deepOrange.withOpacity(0.14)
+                    : Colors.orange.withOpacity(0.12),
+                child: Icon(
+                  Icons.store,
+                  color: isSelected ? Colors.deepOrange : Colors.deepOrange,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
+                    ),
+                    if (address != null && address!.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        address!,
+                        style: const TextStyle(
+                          color: Color(0xFF625D5A),
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                    if (phone != null && phone!.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        phone!,
+                        style: const TextStyle(
+                          color: Color(0xFF625D5A),
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (isSelected)
+                const Icon(Icons.check_circle, color: Colors.deepOrange),
+            ],
+          ),
         ),
       ),
     );
@@ -1752,141 +1901,6 @@ class _SectionContainer extends StatelessWidget {
                 const SizedBox(height: 22),
                 child,
               ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class CheckoutPage extends StatelessWidget {
-  final Map<String, int> cart;
-  final List<Product> products;
-  final String? token;
-
-  const CheckoutPage({
-    super.key,
-    required this.cart,
-    required this.products,
-    this.token,
-  });
-
-  Product getProductById(String productId) {
-    return products.firstWhere((p) => p.id == productId);
-  }
-
-  double get cartTotal {
-    double total = 0;
-    for (final entry in cart.entries) {
-      final product = getProductById(entry.key);
-      total += product.price * entry.value;
-    }
-    return total;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        elevation: 0,
-        title: const Text('Checkout'),
-      ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 600),
-          child: Card(
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    'Order Summary',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  ...cart.entries.map((entry) {
-                    final product = getProductById(entry.key);
-                    final qty = entry.value;
-                    final lineTotal = product.price * qty;
-
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  product.name,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Qty: $qty × \$${product.price.toStringAsFixed(2)}',
-                                  style: const TextStyle(
-                                    color: Color(0xFF625D5A),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Text(
-                            '\$${lineTotal.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              color: Colors.deepOrange,
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
-                  const Divider(),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Total',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      Text(
-                        '\$${cartTotal.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.deepOrange,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                    },
-                    icon: const Icon(Icons.arrow_back),
-                    label: const Text('Back to Menu'),
-                  ),
-                ],
-              ),
             ),
           ),
         ),

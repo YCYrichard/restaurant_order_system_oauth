@@ -3,6 +3,7 @@
 import 'dart:convert';
 import 'dart:html' as html;
 import 'package:flutter/material.dart';
+import '../jwt_decode.dart';
 import '../main.dart';
 
 const String apiBaseUrl = String.fromEnvironment(
@@ -14,11 +15,13 @@ class CheckoutPage extends StatefulWidget {
   final Map<String, int> cart;
   final List<Product> products;
   final String? token;
+  final int storeId;
 
   const CheckoutPage({
     super.key,
     required this.cart,
     required this.products,
+    required this.storeId,
     this.token,
   });
 
@@ -72,10 +75,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
       _errorMessage = null;
     });
 
-    // In a real app, decode userId from token; using placeholder here.
-    final userId = widget.token != null ? 1 : null;
-    // Store id 1 for now; later you can select actual store from UI.
-    final storeId = 1;
+    final userId = widget.token != null && widget.token!.isNotEmpty
+        ? JwtPayload.fromToken(widget.token!).id
+        : null;
+
+    final storeId = widget.storeId;
 
     final items = widget.cart.entries.map((e) {
       final product = widget.products.firstWhere((p) => p.id == e.key);
