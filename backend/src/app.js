@@ -56,8 +56,4 @@ app.use('/categories', categoriesRoutes);
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-const port = process.env.PORT || 3000;
-
-app.listen(port, () => {
-  console.log(`API running on http://localhost:${port}`);
-});
+module.exports = app;

@@ -1,180 +1,54 @@
-const db = require('../config/db');
+const ordersService = require('../services/orders.service');
 
-exports.createOrder = async (req, res) => {
+exports.createOrder = async (req, res, next) => {
   try {
-    const {
-      userId,
-      storeId,
-      items,
-      total,
-      customerName,
-      customerPhone,
-      customerEmail,
-      notes
-    } = req.body;
-
-    if (
-      !storeId ||
-      !items ||
-      !Array.isArray(items) ||
-      items.length === 0 ||
-      !total ||
-      !customerName ||
-      !customerPhone
-    ) {
-      return res.status(400).json({ message: 'Missing required fields' });
-    }
-
-    // Insert order header
-    const [orderResult] = await db.execute(
-      `INSERT INTO orders (
-        user_id, store_id, total, customer_name, customer_phone, customer_email, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        userId || null,
-        storeId,
-        total,
-        customerName,
-        customerPhone,
-        customerEmail || null,
-        notes || null
-      ]
-    );
-
-    const orderId = orderResult.insertId;
-
-    // Prepare item values: [orderId, productId, quantity, price]
-    const itemValues = items.map(item => [
-      orderId,
-      item.productId,
-      item.quantity,
-      item.price
-    ]);
-
-    // Build multi-row placeholders for MySQL
-    const placeholders = itemValues.map(() => '(?, ?, ?, ?)').join(', ');
-    const flatValues = itemValues.flat();
-
-    await db.execute(
-      `INSERT INTO order_items (order_id, product_id, quantity, price)
-       VALUES ${placeholders}`,
-      flatValues
-    );
-
-    // Load order with store name
-    const [orderRows] = await db.execute(
-      `SELECT o.*, s.name AS store_name
-       FROM orders o
-       LEFT JOIN stores s ON o.store_id = s.id
-       WHERE o.id = ?`,
-      [orderId]
-    );
-
-    // Load items with product name
-    const [itemRows] = await db.execute(
-      `SELECT oi.*, p.name AS product_name
-       FROM order_items oi
-       JOIN products p ON oi.product_id = p.id
-       WHERE oi.order_id = ?`,
-      [orderId]
-    );
+    const order = await ordersService.createOrder(req.body);
 
     res.status(201).json({
       message: 'Order created',
-      order: {
-        ...orderRows[0],
-        items: itemRows
-      }
+      order,
     });
   } catch (error) {
-    console.error('Create order error:', error);
-    res.status(500).json({
-      message: 'Failed to create order'
-    });
+    next(error);
   }
 };
 
-exports.getUserOrders = async (req, res) => {
+exports.getUserOrders = async (req, res, next) => {
   try {
     const userId = Number(req.params.userId);
 
     if (req.user.role !== 'admin' && req.user.id !== userId) {
       return res.status(403).json({
-        message: 'You do not have access to these orders'
+        message: 'You do not have access to these orders',
       });
     }
 
-    const [orders] = await db.execute(
-      `SELECT o.*, s.name AS store_name
-       FROM orders o
-       LEFT JOIN stores s ON o.store_id = s.id
-       WHERE o.user_id = ?
-       ORDER BY o.created_at DESC`,
-      [userId]
-    );
+    const orders = await ordersService.getOrdersForUser(userId);
 
-    const ordersWithItems = await Promise.all(
-      orders.map(async (order) => {
-        const [items] = await db.execute(
-          `SELECT oi.*, p.name AS product_name
-           FROM order_items oi
-           JOIN products p ON oi.product_id = p.id
-           WHERE oi.order_id = ?`,
-          [order.id]
-        );
-        return { ...order, items };
-      })
-    );
-
-    res.json({ orders: ordersWithItems });
+    res.json({ orders });
   } catch (error) {
-    console.error('Get user orders error:', error);
-    res.status(500).json({
-      message: 'Failed to get orders'
-    });
+    next(error);
   }
 };
 
-exports.getOrderById = async (req, res) => {
+exports.getOrderById = async (req, res, next) => {
   try {
-    const orderId = req.params.orderId;
+    const orderId = Number(req.params.orderId);
 
-    const [orderRows] = await db.execute(
-      `SELECT o.*, s.name AS store_name
-       FROM orders o
-       LEFT JOIN stores s ON o.store_id = s.id
-       WHERE o.id = ?`,
-      [orderId]
-    );
+    const order = await ordersService.getOrderById(orderId);
 
-    if (orderRows.length === 0) {
+    if (!order) {
       return res.status(404).json({ message: 'Order not found' });
     }
 
-    if (req.user.role !== 'admin' && orderRows[0].user_id !== req.user.id) {
+    if (req.user.role !== 'admin' && order.user_id !== req.user.id) {
       return res.status(403).json({
-        message: 'You do not have access to this order'
+        message: 'You do not have access to this order',
       });
     }
 
-    const [items] = await db.execute(
-      `SELECT oi.*, p.name AS product_name
-       FROM order_items oi
-       JOIN products p ON oi.product_id = p.id
-       WHERE oi.order_id = ?`,
-      [orderId]
-    );
-
-    res.json({
-      order: {
-        ...orderRows[0],
-        items
-      }
-    });
+    res.json({ order });
   } catch (error) {
-    console.error('Get order error:', error);
-    res.status(500).json({
-      message: 'Failed to get order'
-    });
+    next(error);
   }
 };
