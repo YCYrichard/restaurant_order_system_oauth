@@ -17,13 +17,16 @@ class AdminPage extends StatefulWidget {
 class _AdminPageState extends State<AdminPage> {
   List<Map<String, dynamic>> stores = [];
   List<Map<String, dynamic>> products = [];
+  List<Map<String, dynamic>> categories = [];
 
   Map<String, dynamic>? selectedStore;
 
   bool _loadingStores = false;
   bool _loadingProducts = false;
+  bool _loadingCategories = false;
   bool _savingStore = false;
   bool _savingProduct = false;
+  bool _savingCategory = false;
 
   String? _message;
   bool _messageIsError = false;
@@ -185,11 +188,16 @@ class _AdminPageState extends State<AdminPage> {
       });
 
       if (selectedStore != null) {
-        await _loadProductsForSelectedStore();
+        await Future.wait([
+          _loadProductsForSelectedStore(),
+          _loadCategoriesForSelectedStore(),
+        ]);
       } else {
         setState(() {
           products = [];
+          categories = [];
           _loadingProducts = false;
+          _loadingCategories = false;
         });
       }
     } catch (error) {
@@ -199,6 +207,219 @@ class _AdminPageState extends State<AdminPage> {
 
       _showMessage(
         'Network error while loading stores: $error',
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _loadCategoriesForSelectedStore() async {
+    if (selectedStore == null) {
+      setState(() {
+        categories = [];
+      });
+      return;
+    }
+
+    final storeId = selectedStore!['id'];
+
+    if (storeId == null) {
+      return;
+    }
+
+    setState(() {
+      _loadingCategories = true;
+    });
+
+    try {
+      final response = await http.get(
+        Uri.parse('$apiBaseUrl/categories/store/$storeId'),
+        headers: _headers(),
+      );
+
+      if (_isUnauthorized(response.statusCode)) {
+        _handleUnauthorized();
+        return;
+      }
+
+      if (response.statusCode != 200) {
+        _showMessage(
+          'Failed to load categories: ${response.body}',
+          isError: true,
+        );
+        setState(() {
+          _loadingCategories = false;
+        });
+        return;
+      }
+
+      final loadedCategories = _decodeList(
+        response.body,
+        'categories',
+      );
+
+      setState(() {
+        categories = loadedCategories;
+        _loadingCategories = false;
+      });
+    } catch (error) {
+      setState(() {
+        _loadingCategories = false;
+      });
+
+      _showMessage(
+        'Network error while loading categories: $error',
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _createCategory({
+    required String name,
+    int sortOrder = 0,
+  }) async {
+    if (selectedStore == null) {
+      _showMessage(
+        'Select a store first.',
+        isError: true,
+      );
+      return;
+    }
+
+    if (name.trim().isEmpty) {
+      _showMessage(
+        'Category name is required.',
+        isError: true,
+      );
+      return;
+    }
+
+    final storeId = selectedStore!['id'];
+
+    setState(() {
+      _savingCategory = true;
+    });
+
+    try {
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/categories/store/$storeId'),
+        headers: _headers(json: true),
+        body: jsonEncode({
+          'name': name.trim(),
+          'sortOrder': sortOrder,
+        }),
+      );
+
+      if (_isUnauthorized(response.statusCode)) {
+        _handleUnauthorized();
+        return;
+      }
+
+      if (response.statusCode != 201) {
+        _showMessage(
+          'Failed to create category: ${response.body}',
+          isError: true,
+        );
+        return;
+      }
+
+      _showMessage('Category created successfully.');
+      await _loadCategoriesForSelectedStore();
+    } catch (error) {
+      _showMessage(
+        'Network error while creating category: $error',
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingCategory = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _updateCategory({
+    required int categoryId,
+    required String name,
+    int sortOrder = 0,
+  }) async {
+    if (name.trim().isEmpty) {
+      _showMessage(
+        'Category name is required.',
+        isError: true,
+      );
+      return;
+    }
+
+    setState(() {
+      _savingCategory = true;
+    });
+
+    try {
+      final response = await http.put(
+        Uri.parse('$apiBaseUrl/categories/$categoryId'),
+        headers: _headers(json: true),
+        body: jsonEncode({
+          'name': name.trim(),
+          'sortOrder': sortOrder,
+        }),
+      );
+
+      if (_isUnauthorized(response.statusCode)) {
+        _handleUnauthorized();
+        return;
+      }
+
+      if (response.statusCode != 200) {
+        _showMessage(
+          'Failed to update category: ${response.body}',
+          isError: true,
+        );
+        return;
+      }
+
+      _showMessage('Category updated successfully.');
+      await _loadCategoriesForSelectedStore();
+    } catch (error) {
+      _showMessage(
+        'Network error while updating category: $error',
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingCategory = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _deleteCategory(int categoryId) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$apiBaseUrl/categories/$categoryId'),
+        headers: _headers(json: true),
+      );
+
+      if (_isUnauthorized(response.statusCode)) {
+        _handleUnauthorized();
+        return;
+      }
+
+      if (response.statusCode != 200) {
+        final decoded = _decodeMap(response.body);
+        _showMessage(
+          decoded['message']?.toString() ?? 'Failed to delete category.',
+          isError: true,
+        );
+        return;
+      }
+
+      _showMessage('Category deleted.');
+      await _loadCategoriesForSelectedStore();
+    } catch (error) {
+      _showMessage(
+        'Network error while deleting category: $error',
         isError: true,
       );
     }
@@ -426,6 +647,7 @@ class _AdminPageState extends State<AdminPage> {
     required String name,
     required String description,
     required double price,
+    int? categoryId,
   }) async {
     if (selectedStore == null) {
       _showMessage(
@@ -449,6 +671,7 @@ class _AdminPageState extends State<AdminPage> {
           'name': name.trim(),
           'description': description.trim(),
           'price': price,
+          'categoryId': categoryId,
         }),
       );
 
@@ -486,6 +709,7 @@ class _AdminPageState extends State<AdminPage> {
     required String name,
     required String description,
     required double price,
+    int? categoryId,
   }) async {
     setState(() {
       _savingProduct = true;
@@ -499,6 +723,7 @@ class _AdminPageState extends State<AdminPage> {
           'name': name.trim(),
           'description': description.trim(),
           'price': price,
+          'categoryId': categoryId,
         }),
       );
 
@@ -773,94 +998,140 @@ class _AdminPageState extends State<AdminPage> {
     final nameController = TextEditingController();
     final descriptionController = TextEditingController();
     final priceController = TextEditingController();
+    int? selectedCategoryId;
 
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(
-            'Create Product for ${selectedStore!['name']}',
-          ),
-          content: SizedBox(
-            width: 500,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Product name',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: descriptionController,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'Description',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: priceController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: const InputDecoration(
-                      labelText: 'Price',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ],
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              title: Text(
+                'Create Product for ${selectedStore!['name']}',
               ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(dialogContext).pop();
-              },
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: _savingProduct
-                  ? null
-                  : () async {
-                      final name = nameController.text.trim();
-                      final price = double.tryParse(
-                        priceController.text.trim(),
-                      );
+              content: SizedBox(
+                width: 500,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Product name',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: descriptionController,
+                        maxLines: 3,
+                        decoration: const InputDecoration(
+                          labelText: 'Description',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: priceController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Price',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      DropdownButtonFormField<int?>(
+                        value: selectedCategoryId,
+                        decoration: const InputDecoration(
+                          labelText: 'Category (optional)',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          const DropdownMenuItem<int?>(
+                            value: null,
+                            child: Text('No category'),
+                          ),
+                          ...categories.map((category) {
+                            final categoryId = int.tryParse(
+                              category['id'].toString(),
+                            );
+                            return DropdownMenuItem<int?>(
+                              value: categoryId,
+                              child: Text(
+                                category['name']?.toString() ?? 'Unnamed',
+                              ),
+                            );
+                          }),
+                        ],
+                        onChanged: (value) {
+                          setDialogState(() {
+                            selectedCategoryId = value;
+                          });
+                        },
+                      ),
+                      if (categories.isEmpty) ...[
+                        const SizedBox(height: 8),
+                        const Text(
+                          'No categories yet - create one from the Categories panel first if you want to organize products.',
+                          style: TextStyle(
+                            color: Color(0xFF625D5A),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                  },
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: _savingProduct
+                      ? null
+                      : () async {
+                          final name = nameController.text.trim();
+                          final price = double.tryParse(
+                            priceController.text.trim(),
+                          );
 
-                      if (name.isEmpty) {
-                        _showMessage(
-                          'Product name is required.',
-                          isError: true,
-                        );
-                        return;
-                      }
+                          if (name.isEmpty) {
+                            _showMessage(
+                              'Product name is required.',
+                              isError: true,
+                            );
+                            return;
+                          }
 
-                      if (price == null || price < 0) {
-                        _showMessage(
-                          'Enter a valid product price.',
-                          isError: true,
-                        );
-                        return;
-                      }
+                          if (price == null || price < 0) {
+                            _showMessage(
+                              'Enter a valid product price.',
+                              isError: true,
+                            );
+                            return;
+                          }
 
-                      Navigator.of(dialogContext).pop();
+                          Navigator.of(dialogContext).pop();
 
-                      await _createProduct(
-                        name: name,
-                        description: descriptionController.text,
-                        price: price,
-                      );
-                    },
-              child: const Text('Create Product'),
-            ),
-          ],
+                          await _createProduct(
+                            name: name,
+                            description: descriptionController.text,
+                            price: price,
+                            categoryId: selectedCategoryId,
+                          );
+                        },
+                  child: const Text('Create Product'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -869,6 +1140,7 @@ class _AdminPageState extends State<AdminPage> {
     descriptionController.dispose();
     priceController.dispose();
   }
+
 
   Future<void> _showEditProductDialog(
     Map<String, dynamic> product,
@@ -895,92 +1167,140 @@ class _AdminPageState extends State<AdminPage> {
       text: product['price']?.toString() ?? '',
     );
 
+    final existingCategoryId = int.tryParse(
+      product['category_id']?.toString() ?? '',
+    );
+
+    // Only pre-select if that category still exists in the currently
+    // loaded list - avoids DropdownButtonFormField asserting on a stale id.
+    int? selectedCategoryId = categories.any(
+      (category) =>
+          int.tryParse(category['id'].toString()) == existingCategoryId,
+    )
+        ? existingCategoryId
+        : null;
+
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Edit Product'),
-          content: SizedBox(
-            width: 500,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Product name',
-                      border: OutlineInputBorder(),
-                    ),
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              title: const Text('Edit Product'),
+              content: SizedBox(
+                width: 500,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Product name',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: descriptionController,
+                        maxLines: 3,
+                        decoration: const InputDecoration(
+                          labelText: 'Description',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: priceController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Price',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      DropdownButtonFormField<int?>(
+                        value: selectedCategoryId,
+                        decoration: const InputDecoration(
+                          labelText: 'Category (optional)',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          const DropdownMenuItem<int?>(
+                            value: null,
+                            child: Text('No category'),
+                          ),
+                          ...categories.map((category) {
+                            final categoryId = int.tryParse(
+                              category['id'].toString(),
+                            );
+                            return DropdownMenuItem<int?>(
+                              value: categoryId,
+                              child: Text(
+                                category['name']?.toString() ?? 'Unnamed',
+                              ),
+                            );
+                          }),
+                        ],
+                        onChanged: (value) {
+                          setDialogState(() {
+                            selectedCategoryId = value;
+                          });
+                        },
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: descriptionController,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'Description',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: priceController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: const InputDecoration(
-                      labelText: 'Price',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(dialogContext).pop();
-              },
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: _savingProduct
-                  ? null
-                  : () async {
-                      final name = nameController.text.trim();
-                      final price = double.tryParse(
-                        priceController.text.trim(),
-                      );
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                  },
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: _savingProduct
+                      ? null
+                      : () async {
+                          final name = nameController.text.trim();
+                          final price = double.tryParse(
+                            priceController.text.trim(),
+                          );
 
-                      if (name.isEmpty) {
-                        _showMessage(
-                          'Product name is required.',
-                          isError: true,
-                        );
-                        return;
-                      }
+                          if (name.isEmpty) {
+                            _showMessage(
+                              'Product name is required.',
+                              isError: true,
+                            );
+                            return;
+                          }
 
-                      if (price == null || price < 0) {
-                        _showMessage(
-                          'Enter a valid product price.',
-                          isError: true,
-                        );
-                        return;
-                      }
+                          if (price == null || price < 0) {
+                            _showMessage(
+                              'Enter a valid product price.',
+                              isError: true,
+                            );
+                            return;
+                          }
 
-                      Navigator.of(dialogContext).pop();
+                          Navigator.of(dialogContext).pop();
 
-                      await _updateProduct(
-                        productId: productId,
-                        name: name,
-                        description: descriptionController.text,
-                        price: price,
-                      );
-                    },
-              child: const Text('Save Changes'),
-            ),
-          ],
+                          await _updateProduct(
+                            productId: productId,
+                            name: name,
+                            description: descriptionController.text,
+                            price: price,
+                            categoryId: selectedCategoryId,
+                          );
+                        },
+                  child: const Text('Save Changes'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -994,9 +1314,11 @@ class _AdminPageState extends State<AdminPage> {
     setState(() {
       selectedStore = store;
       products = [];
+      categories = [];
     });
 
     _loadProductsForSelectedStore();
+    _loadCategoriesForSelectedStore();
   }
 
   void _logout() {
@@ -1100,7 +1422,13 @@ class _AdminPageState extends State<AdminPage> {
                         children: [
                           Expanded(
                             flex: 4,
-                            child: _buildStoresPanel(),
+                            child: Column(
+                              children: [
+                                _buildStoresPanel(),
+                                const SizedBox(height: 20),
+                                _buildCategoriesPanel(),
+                              ],
+                            ),
                           ),
                           const SizedBox(width: 20),
                           Expanded(
@@ -1114,6 +1442,8 @@ class _AdminPageState extends State<AdminPage> {
                     return Column(
                       children: [
                         _buildStoresPanel(),
+                        const SizedBox(height: 20),
+                        _buildCategoriesPanel(),
                         const SizedBox(height: 20),
                         _buildProductsPanel(),
                       ],
@@ -1408,6 +1738,298 @@ class _AdminPageState extends State<AdminPage> {
     );
   }
 
+  Widget _buildCategoriesPanel() {
+    return Card(
+      color: Colors.white,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Categories',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: selectedStore == null || _loadingCategories
+                      ? null
+                      : _loadCategoriesForSelectedStore,
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh categories',
+                ),
+                IconButton(
+                  onPressed: selectedStore == null
+                      ? null
+                      : _showCreateCategoryDialog,
+                  icon: const Icon(Icons.add),
+                  tooltip: 'Create category',
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (selectedStore == null)
+              _buildEmptyState(
+                icon: Icons.touch_app_outlined,
+                message: 'Select a store to manage its categories.',
+              )
+            else if (_loadingCategories)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(),
+                ),
+              )
+            else if (categories.isEmpty)
+              _buildEmptyState(
+                icon: Icons.label_outline,
+                message: 'No categories yet for this store.',
+                buttonLabel: 'Create Category',
+                onPressed: _showCreateCategoryDialog,
+              )
+            else
+              Column(
+                children: categories.map(_buildCategoryTile).toList(),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryTile(Map<String, dynamic> category) {
+    final categoryId = int.tryParse(category['id'].toString());
+
+    return Card(
+      color: const Color(0xFFFAFAFA),
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        child: Row(
+          children: [
+            const Icon(Icons.label_outline, color: Colors.deepOrange),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                category['name']?.toString() ?? 'Unnamed',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            if (categoryId != null)
+              PopupMenuButton<String>(
+                onSelected: (value) async {
+                  if (value == 'edit') {
+                    await _showEditCategoryDialog(category);
+                  }
+
+                  if (value == 'delete') {
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (dialogContext) {
+                        return AlertDialog(
+                          title: const Text('Delete Category'),
+                          content: Text(
+                            'Delete "${category['name']}"? This cannot be undone.',
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.of(dialogContext).pop(false),
+                              child: const Text('Cancel'),
+                            ),
+                            FilledButton(
+                              onPressed: () =>
+                                  Navigator.of(dialogContext).pop(true),
+                              child: const Text('Delete'),
+                            ),
+                          ],
+                        );
+                      },
+                    );
+
+                    if (confirmed == true) {
+                      await _deleteCategory(categoryId);
+                    }
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.edit_outlined),
+                      title: Text('Edit'),
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.delete_outline),
+                      title: Text('Delete'),
+                    ),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showCreateCategoryDialog() async {
+    if (selectedStore == null) {
+      _showMessage(
+        'Select a store before creating a category.',
+        isError: true,
+      );
+      return;
+    }
+
+    final nameController = TextEditingController();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(
+            'Create Category for ${selectedStore!['name']}',
+          ),
+          content: SizedBox(
+            width: 420,
+            child: TextField(
+              controller: nameController,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Category name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: _savingCategory
+                  ? null
+                  : () async {
+                      final name = nameController.text.trim();
+
+                      if (name.isEmpty) {
+                        _showMessage(
+                          'Category name is required.',
+                          isError: true,
+                        );
+                        return;
+                      }
+
+                      Navigator.of(dialogContext).pop();
+
+                      await _createCategory(name: name);
+                    },
+              child: const Text('Create'),
+            ),
+          ],
+        );
+      },
+    );
+
+    nameController.dispose();
+  }
+
+  Future<void> _showEditCategoryDialog(
+    Map<String, dynamic> category,
+  ) async {
+    final categoryId = int.tryParse(category['id'].toString());
+
+    if (categoryId == null) {
+      _showMessage(
+        'Invalid category ID.',
+        isError: true,
+      );
+      return;
+    }
+
+    final nameController = TextEditingController(
+      text: category['name']?.toString() ?? '',
+    );
+
+    final currentSortOrder =
+        int.tryParse(category['sort_order']?.toString() ?? '') ?? 0;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Edit Category'),
+          content: SizedBox(
+            width: 420,
+            child: TextField(
+              controller: nameController,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Category name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: _savingCategory
+                  ? null
+                  : () async {
+                      final name = nameController.text.trim();
+
+                      if (name.isEmpty) {
+                        _showMessage(
+                          'Category name is required.',
+                          isError: true,
+                        );
+                        return;
+                      }
+
+                      Navigator.of(dialogContext).pop();
+
+                      await _updateCategory(
+                        categoryId: categoryId,
+                        name: name,
+                        sortOrder: currentSortOrder,
+                      );
+                    },
+              child: const Text('Save Changes'),
+            ),
+          ],
+        );
+      },
+    );
+
+    nameController.dispose();
+  }
+
   Widget _buildProductsPanel() {
     final storeName = selectedStore?['name']?.toString();
 
@@ -1519,6 +2141,28 @@ class _AdminPageState extends State<AdminPage> {
                       fontWeight: FontWeight.w800,
                     ),
                   ),
+                  if (product['category_name'] != null &&
+                      product['category_name'].toString().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.deepOrange.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        product['category_name'].toString(),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.deepOrange,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 5),
                   Text(
                     product['description']?.toString().isNotEmpty == true
