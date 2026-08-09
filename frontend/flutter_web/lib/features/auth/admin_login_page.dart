@@ -1,12 +1,12 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:web/web.dart' as web;
+import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 
-import 'admin_page.dart';
-import 'core/constants/app_config.dart';
-import 'jwt_decode.dart';
+import '../../core/auth/auth_controller.dart';
+import '../../core/constants/app_config.dart';
+import '../../jwt_decode.dart';
 
 class AdminLoginPage extends StatefulWidget {
   const AdminLoginPage({super.key});
@@ -60,16 +60,14 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
     });
 
     try {
-      final response = await http.post(
-        Uri.parse('$apiBaseUrl/auth/admin-login'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode({
+      final auth = context.read<AuthController>();
+
+      final response = await auth.post(
+        '/auth/admin-login',
+        body: {
           'username': username,
           'password': password,
-        }),
+        },
       );
 
       final decodedResponse = jsonDecode(response.body);
@@ -115,20 +113,15 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
         return;
       }
 
-      web.window.localStorage.setItem('auth_token', token);
-      web.window.localStorage.setItem('auth_role', payload.role ?? 'admin');
-      web.window.localStorage.setItem('auth_name', payload.name ?? username);
+      auth.setSession(token);
 
       if (!mounted) {
         return;
       }
 
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (_) => const AdminPage(),
-        ),
-        (route) => false,
-      );
+      // The router's redirect logic sends an authenticated admin from '/'
+      // to '/admin' automatically once AuthController notifies listeners.
+      context.go('/');
     } catch (error) {
       _showMessage(
         'Unable to connect to the backend. Make sure the API is running at $apiBaseUrl.',
@@ -164,7 +157,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
       return;
     }
 
-    web.window.location.hash = '';
+    context.go('/');
   }
 
   @override

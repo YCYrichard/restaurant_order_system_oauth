@@ -1,23 +1,21 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
-import 'package:web/web.dart' as web;
+import 'package:provider/provider.dart';
+import '../core/auth/auth_controller.dart';
 import '../core/constants/app_config.dart';
-import '../jwt_decode.dart';
+import '../features/cart/cart_controller.dart';
 import '../models/product.dart';
 
 class CheckoutPage extends StatefulWidget {
-  final Map<int, int> cart;
   final List<Product> products;
-  final String? token;
   final int storeId;
 
   const CheckoutPage({
     super.key,
-    required this.cart,
     required this.products,
     required this.storeId,
-    this.token,
   });
 
   @override
@@ -45,22 +43,22 @@ class _CheckoutPageState extends State<CheckoutPage> {
     super.dispose();
   }
 
-  double get _subtotal {
+  double _subtotal(Map<int, int> cart) {
     double total = 0;
-    for (final entry in widget.cart.entries) {
+    for (final entry in cart.entries) {
       final product = widget.products.firstWhere((p) => p.id == entry.key);
       total += product.price * entry.value;
     }
     return total;
   }
 
-  int get _itemCount {
-    return widget.cart.values.fold(0, (sum, qty) => sum + qty);
+  int _itemCount(Map<int, int> cart) {
+    return cart.values.fold(0, (sum, qty) => sum + qty);
   }
 
-  Future<void> _submitOrder() async {
+  Future<void> _submitOrder(Map<int, int> cart) async {
     if (!_formKey.currentState!.validate()) return;
-    if (widget.cart.isEmpty) {
+    if (cart.isEmpty) {
       setState(() => _errorMessage = 'Your cart is empty.');
       return;
     }
@@ -70,13 +68,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
       _errorMessage = null;
     });
 
-    final userId = widget.token != null && widget.token!.isNotEmpty
-        ? JwtPayload.fromToken(widget.token!).id
-        : null;
-
+    final userId = context.read<AuthController>().userId;
     final storeId = widget.storeId;
 
-    final items = widget.cart.entries.map((e) {
+    final items = cart.entries.map((e) {
       final product = widget.products.firstWhere((p) => p.id == e.key);
       return {
         'productId': product.id,
@@ -89,7 +84,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       'userId': userId,
       'storeId': storeId,
       'items': items,
-      'total': _subtotal,
+      'total': _subtotal(cart),
       'customerName': _nameController.text.trim(),
       'customerPhone': _phoneController.text.trim(),
       'customerEmail': _emailController.text.trim().isEmpty
@@ -109,6 +104,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         final data = jsonDecode(response.body);
+
+        if (mounted) {
+          context.read<CartController>().clear();
+        }
+
         setState(() {
           _isSubmitting = false;
           _orderId = data['order']?['id']?.toString();
@@ -132,6 +132,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
     if (_orderId != null) {
       return _OrderSuccessSection(orderId: _orderId!);
     }
+
+    final cart = context.watch<CartController>().items;
 
     return Scaffold(
       appBar: AppBar(
@@ -198,10 +200,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     ),
                     const SizedBox(height: 16),
                     _OrderSummary(
-                      cart: widget.cart,
+                      cart: cart,
                       products: widget.products,
-                      itemCount: _itemCount,
-                      subtotal: _subtotal,
+                      itemCount: _itemCount(cart),
+                      subtotal: _subtotal(cart),
                     ),
                     const SizedBox(height: 24),
                     if (_errorMessage != null) ...[
@@ -225,7 +227,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     Align(
                       alignment: Alignment.centerRight,
                       child: FilledButton.icon(
-                        onPressed: _isSubmitting ? null : _submitOrder,
+                        onPressed:
+                            _isSubmitting ? null : () => _submitOrder(cart),
                         icon: _isSubmitting
                             ? const SizedBox(
                                 width: 20,
@@ -463,9 +466,7 @@ class _OrderSuccessSection extends StatelessWidget {
                     ),
                     const SizedBox(height: 24),
                     FilledButton.icon(
-                      onPressed: () {
-                        web.window.location.href = '/';
-                      },
+                      onPressed: () => context.go('/'),
                       icon: const Icon(Icons.home),
                       label: const Text('Back to Home'),
                     ),

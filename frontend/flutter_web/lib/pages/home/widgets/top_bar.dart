@@ -1,7 +1,6 @@
 // ignore_for_file: deprecated_member_use
 import 'package:flutter/material.dart';
-
-import '../../../admin_login_page.dart';
+import 'package:go_router/go_router.dart';
 
 class TopBar extends StatelessWidget {
   final bool isLoggedIn;
@@ -106,13 +105,7 @@ class TopBar extends StatelessWidget {
                   label: const Text('Logout'),
                 )
               : OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const AdminLoginPage(),
-                      ),
-                    );
-                  },
+                  onPressed: () => context.go('/admin/login'),
                   icon: const Icon(Icons.admin_panel_settings),
                   label: const Text('Admin Login'),
                 ),

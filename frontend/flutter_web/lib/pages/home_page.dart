@@ -1,17 +1,20 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
+import 'package:provider/provider.dart';
 import 'package:web/web.dart' as web;
 
 import '../core/api/api_client.dart';
+import '../core/auth/auth_controller.dart';
 import '../core/constants/app_config.dart';
 import '../features/auth/widgets/social_login_section.dart';
+import '../features/cart/cart_controller.dart';
 import '../features/cart/widgets/cart_summary_section.dart';
 import '../features/menu/data/menu_repository.dart';
 import '../features/menu/widgets/menu_products_section.dart';
 import '../features/store/widgets/store_selector_section.dart';
 import '../models/product.dart';
-import 'checkout_page.dart';
 import 'home/widgets/footer_section.dart';
 import 'home/widgets/hero_section.dart';
 import 'home/widgets/order_steps_section.dart';
@@ -25,9 +28,6 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  String? token;
-  String? userMessage;
-
   List<Map<String, dynamic>> stores = [];
   int? selectedStoreId;
   bool _loadingStores = false;
@@ -36,12 +36,9 @@ class _HomePageState extends State<HomePage> {
   bool _loadingMenu = false;
   String? _menuError;
 
-  final Map<int, int> cart = {};
-
   @override
   void initState() {
     super.initState();
-    _readAuthFromUrl();
     _loadStores();
   }
 
@@ -136,63 +133,19 @@ class _HomePageState extends State<HomePage> {
 
     setState(() {
       selectedStoreId = storeId;
-      // Cart items reference product ids scoped to the previous store.
-      cart.clear();
     });
 
+    // Cart items reference product ids scoped to the previous store.
+    context.read<CartController>().clear();
     _loadMenu(storeId);
-  }
-
-  void _readAuthFromUrl() {
-    final hash = web.window.location.hash;
-
-    if (hash.startsWith('#/auth-success')) {
-      final uri = Uri.tryParse(hash.replaceFirst('#', ''));
-      final extractedToken = uri?.queryParameters['token'];
-
-      setState(() {
-        token = extractedToken;
-        userMessage = extractedToken != null && extractedToken.isNotEmpty
-            ? 'Signed in successfully.'
-            : 'Sign-in completed, but token was not found.';
-      });
-
-      if (extractedToken != null && extractedToken.isNotEmpty) {
-        web.window.localStorage.setItem('auth_token', extractedToken);
-      }
-    } else if (hash.startsWith('#/auth-error')) {
-      final uri = Uri.tryParse(hash.replaceFirst('#', ''));
-      final errorMessage = uri?.queryParameters['message'];
-
-      setState(() {
-        userMessage = (errorMessage != null && errorMessage.isNotEmpty)
-            ? errorMessage
-            : 'Sign-in failed. Please try again.';
-      });
-    }
   }
 
   void _open(String url) {
     web.window.location.href = url;
   }
 
-  void _logout() {
-    setState(() {
-      token = null;
-      userMessage = 'You have signed out locally.';
-    });
-
-    web.window.localStorage.removeItem('auth_token');
-    web.window.localStorage.removeItem('auth_role');
-    web.window.localStorage.removeItem('auth_name');
-    web.window.location.hash = '';
-  }
-
-  void addToCart(Product product) {
-    setState(() {
-      cart.update(product.id, (value) => value + 1, ifAbsent: () => 1);
-      userMessage = '${product.name} added to cart.';
-    });
+  void _addToCart(Product product) {
+    context.read<CartController>().add(product);
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -202,46 +155,8 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void increaseQty(int productId) {
-    setState(() {
-      cart.update(productId, (value) => value + 1);
-    });
-  }
-
-  void decreaseQty(int productId) {
-    setState(() {
-      if (!cart.containsKey(productId)) return;
-      final current = cart[productId]!;
-      if (current <= 1) {
-        cart.remove(productId);
-      } else {
-        cart[productId] = current - 1;
-      }
-    });
-  }
-
-  void clearCart() {
-    setState(() {
-      cart.clear();
-      userMessage = 'Cart cleared.';
-    });
-  }
-
   Product getProductById(int productId) {
     return products.firstWhere((p) => p.id == productId);
-  }
-
-  int get cartItemCount {
-    return cart.values.fold(0, (sum, qty) => sum + qty);
-  }
-
-  double get cartSubtotal {
-    double total = 0;
-    for (final entry in cart.entries) {
-      final product = getProductById(entry.key);
-      total += product.price * entry.value;
-    }
-    return total;
   }
 
   Map<String, List<Product>> get groupedProducts {
@@ -254,7 +169,7 @@ class _HomePageState extends State<HomePage> {
     return grouped;
   }
 
-  void _goToCheckout() {
+  void _goToCheckout(CartController cart) {
     if (cart.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -275,21 +190,23 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => CheckoutPage(
-          cart: Map<int, int>.from(cart),
-          products: products,
-          token: token,
-          storeId: selectedStoreId!,
-        ),
-      ),
+    context.push(
+      '/checkout',
+      extra: {
+        'products': products,
+        'storeId': selectedStoreId!,
+      },
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final isLoggedIn = token != null && token!.isNotEmpty;
+    final auth = context.watch<AuthController>();
+    final cart = context.watch<CartController>();
+
+    final isLoggedIn = auth.isLoggedIn;
+    final cartItemCount = cart.itemCount;
+    final cartSubtotal = cart.subtotal(getProductById);
 
     return Scaffold(
       appBar: PreferredSize(
@@ -301,8 +218,8 @@ class _HomePageState extends State<HomePage> {
           onMenuTap: () => _scrollToSection('menu'),
           onStoreTap: () => _scrollToSection('store'),
           onCartTap: () => _scrollToSection('cart'),
-          onCheckoutTap: _goToCheckout,
-          onLogoutTap: _logout,
+          onCheckoutTap: () => _goToCheckout(cart),
+          onLogoutTap: () => context.read<AuthController>().logout(),
         ),
       ),
       body: SingleChildScrollView(
@@ -313,16 +230,16 @@ class _HomePageState extends State<HomePage> {
               cartItemCount: cartItemCount,
               onStartOrder: () => _scrollToSection('menu'),
               onSignIn: () => _scrollToSection('login'),
-              onCheckoutTap: _goToCheckout,
+              onCheckoutTap: () => _goToCheckout(cart),
             ),
             SocialLoginSection(
               isLoggedIn: isLoggedIn,
-              token: token,
-              message: userMessage,
+              token: auth.token,
+              message: null,
               onGoogle: () => _open('$apiBaseUrl/auth/google'),
               onFacebook: () => _open('$apiBaseUrl/auth/facebook'),
               onLine: () => _open('$apiBaseUrl/auth/line'),
-              onLogout: _logout,
+              onLogout: () => context.read<AuthController>().logout(),
             ),
             StoreSelectorSection(
               stores: stores,
@@ -351,18 +268,18 @@ class _HomePageState extends State<HomePage> {
             else
               MenuProductsSection(
                 groupedProducts: groupedProducts,
-                cart: cart,
-                onAddToCart: addToCart,
+                cart: cart.items,
+                onAddToCart: _addToCart,
               ),
             CartSummarySection(
-              cart: cart,
+              cart: cart.items,
               getProductById: getProductById,
               cartItemCount: cartItemCount,
               cartSubtotal: cartSubtotal,
-              onIncreaseQty: increaseQty,
-              onDecreaseQty: decreaseQty,
-              onClearCart: clearCart,
-              onCheckoutTap: _goToCheckout,
+              onIncreaseQty: cart.increase,
+              onDecreaseQty: cart.decrease,
+              onClearCart: cart.clear,
+              onCheckoutTap: () => _goToCheckout(cart),
             ),
             const OrderStepsSection(),
             const FooterSection(),

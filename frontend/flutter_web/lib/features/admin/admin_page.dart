@@ -2,10 +2,10 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:web/web.dart' as web;
+import 'package:provider/provider.dart';
 
-import 'admin_login_page.dart';
-import 'core/constants/app_config.dart';
+import '../../core/auth/auth_controller.dart';
+import '../../core/constants/app_config.dart';
 
 class AdminPage extends StatefulWidget {
   const AdminPage({super.key});
@@ -37,9 +37,9 @@ class _AdminPageState extends State<AdminPage> {
     _loadStores();
   }
 
-  String? get _token {
-    return web.window.localStorage.getItem('auth_token');
-  }
+  AuthController get _auth => context.read<AuthController>();
+
+  String? get _token => _auth.token;
 
   Map<String, String> _headers({
     bool json = false,
@@ -86,19 +86,23 @@ class _AdminPageState extends State<AdminPage> {
     });
   }
 
-  void _handleUnauthorized() {
-    web.window.localStorage.removeItem('auth_token');
-    web.window.localStorage.removeItem('auth_role');
-    web.window.localStorage.removeItem('auth_name');
+  // Tries a silent token refresh first - a plain expired 15-minute access
+  // token shouldn't force a full re-login. Only clears the session and
+  // returns to the login screen if the refresh token itself is invalid,
+  // expired, or revoked.
+  Future<void> _handleUnauthorized() async {
+    final refreshed = await _auth.refresh();
 
-    if (!mounted) return;
+    if (refreshed) {
+      _showMessage(
+        'Your session was refreshed. Please try that action again.',
+      );
+      return;
+    }
 
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(
-        builder: (_) => const AdminLoginPage(),
-      ),
-      (route) => false,
-    );
+    // The router's redirect logic sends the user to /admin/login on its own
+    // once AuthController notifies listeners that the session is gone.
+    await _auth.logout();
   }
 
   Map<String, dynamic> _decodeMap(String responseText) {
@@ -132,7 +136,7 @@ class _AdminPageState extends State<AdminPage> {
 
   Future<void> _loadStores() async {
     if (_token == null || _token!.isEmpty) {
-      _handleUnauthorized();
+      await _handleUnauthorized();
       return;
     }
 
@@ -147,7 +151,7 @@ class _AdminPageState extends State<AdminPage> {
       );
 
       if (_isUnauthorized(response.statusCode)) {
-        _handleUnauthorized();
+        await _handleUnauthorized();
         return;
       }
 
@@ -237,7 +241,7 @@ class _AdminPageState extends State<AdminPage> {
       );
 
       if (_isUnauthorized(response.statusCode)) {
-        _handleUnauthorized();
+        await _handleUnauthorized();
         return;
       }
 
@@ -310,7 +314,7 @@ class _AdminPageState extends State<AdminPage> {
       );
 
       if (_isUnauthorized(response.statusCode)) {
-        _handleUnauthorized();
+        await _handleUnauthorized();
         return;
       }
 
@@ -366,7 +370,7 @@ class _AdminPageState extends State<AdminPage> {
       );
 
       if (_isUnauthorized(response.statusCode)) {
-        _handleUnauthorized();
+        await _handleUnauthorized();
         return;
       }
 
@@ -402,7 +406,7 @@ class _AdminPageState extends State<AdminPage> {
       );
 
       if (_isUnauthorized(response.statusCode)) {
-        _handleUnauthorized();
+        await _handleUnauthorized();
         return;
       }
 
@@ -454,7 +458,7 @@ class _AdminPageState extends State<AdminPage> {
       );
 
       if (_isUnauthorized(response.statusCode)) {
-        _handleUnauthorized();
+        await _handleUnauthorized();
         return;
       }
 
@@ -516,7 +520,7 @@ class _AdminPageState extends State<AdminPage> {
       );
 
       if (_isUnauthorized(response.statusCode)) {
-        _handleUnauthorized();
+        await _handleUnauthorized();
         return;
       }
 
@@ -574,7 +578,7 @@ class _AdminPageState extends State<AdminPage> {
       );
 
       if (_isUnauthorized(response.statusCode)) {
-        _handleUnauthorized();
+        await _handleUnauthorized();
         return;
       }
 
@@ -616,7 +620,7 @@ class _AdminPageState extends State<AdminPage> {
       );
 
       if (_isUnauthorized(response.statusCode)) {
-        _handleUnauthorized();
+        await _handleUnauthorized();
         return;
       }
 
@@ -676,7 +680,7 @@ class _AdminPageState extends State<AdminPage> {
       );
 
       if (_isUnauthorized(response.statusCode)) {
-        _handleUnauthorized();
+        await _handleUnauthorized();
         return;
       }
 
@@ -728,7 +732,7 @@ class _AdminPageState extends State<AdminPage> {
       );
 
       if (_isUnauthorized(response.statusCode)) {
-        _handleUnauthorized();
+        await _handleUnauthorized();
         return;
       }
 
@@ -770,7 +774,7 @@ class _AdminPageState extends State<AdminPage> {
       );
 
       if (_isUnauthorized(response.statusCode)) {
-        _handleUnauthorized();
+        await _handleUnauthorized();
         return;
       }
 
@@ -1321,17 +1325,10 @@ class _AdminPageState extends State<AdminPage> {
     _loadCategoriesForSelectedStore();
   }
 
-  void _logout() {
-    web.window.localStorage.removeItem('auth_token');
-    web.window.localStorage.removeItem('auth_role');
-    web.window.localStorage.removeItem('auth_name');
-
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(
-        builder: (_) => const AdminLoginPage(),
-      ),
-      (route) => false,
-    );
+  Future<void> _logout() async {
+    // The router's redirect logic sends the user to /admin/login on its own
+    // once AuthController notifies listeners that the session is gone.
+    await _auth.logout();
   }
 
   bool _storeIsActive(Map<String, dynamic> store) {
@@ -1459,8 +1456,7 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   Widget _buildHeader() {
-    final adminName =
-        web.window.localStorage.getItem('auth_name') ?? 'Administrator';
+    final adminName = _auth.name ?? 'Administrator';
 
     return Container(
       width: double.infinity,
