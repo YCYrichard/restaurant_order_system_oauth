@@ -190,13 +190,7 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    context.push(
-      '/checkout',
-      extra: {
-        'products': products,
-        'storeId': selectedStoreId!,
-      },
-    );
+    context.push('/checkout?storeId=$selectedStoreId');
   }
 
   @override

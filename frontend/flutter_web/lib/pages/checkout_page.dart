@@ -3,18 +3,18 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
+import '../core/api/api_client.dart';
 import '../core/auth/auth_controller.dart';
 import '../core/constants/app_config.dart';
 import '../features/cart/cart_controller.dart';
+import '../features/menu/data/menu_repository.dart';
 import '../models/product.dart';
 
 class CheckoutPage extends StatefulWidget {
-  final List<Product> products;
   final int storeId;
 
   const CheckoutPage({
     super.key,
-    required this.products,
     required this.storeId,
   });
 
@@ -34,6 +34,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
   String? _orderId;
   String? _errorMessage;
 
+  List<Product> _products = [];
+  bool _loadingProducts = true;
+  String? _loadError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProducts();
+  }
+
   @override
   void dispose() {
     _nameController.dispose();
@@ -43,10 +53,57 @@ class _CheckoutPageState extends State<CheckoutPage> {
     super.dispose();
   }
 
+  // CheckoutPage fetches its own menu instead of receiving it from
+  // HomePage, so a direct load or hard refresh of /checkout?storeId=N
+  // works on its own rather than depending on in-memory navigation state
+  // that doesn't survive a reload.
+  Future<void> _loadProducts() async {
+    setState(() {
+      _loadingProducts = true;
+      _loadError = null;
+    });
+
+    try {
+      final products = await MenuRepository.fetchProducts(widget.storeId);
+
+      if (!mounted) return;
+
+      // The cart persists across reloads, so drop any entries that don't
+      // belong to this store's current menu (e.g. a stale cart left over
+      // from a different store).
+      final validIds = products.map((p) => p.id).toSet();
+      final cart = context.read<CartController>();
+      for (final productId in cart.items.keys.toList()) {
+        if (!validIds.contains(productId)) {
+          cart.remove(productId);
+        }
+      }
+
+      setState(() {
+        _products = products;
+        _loadingProducts = false;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _loadError = error.message;
+        _loadingProducts = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _loadError = "Unable to load this store's menu. Please try again.";
+        _loadingProducts = false;
+      });
+    }
+  }
+
   double _subtotal(Map<int, int> cart) {
     double total = 0;
     for (final entry in cart.entries) {
-      final product = widget.products.firstWhere((p) => p.id == entry.key);
+      final product = _products.firstWhere((p) => p.id == entry.key);
       total += product.price * entry.value;
     }
     return total;
@@ -72,7 +129,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final storeId = widget.storeId;
 
     final items = cart.entries.map((e) {
-      final product = widget.products.firstWhere((p) => p.id == e.key);
+      final product = _products.firstWhere((p) => p.id == e.key);
       return {
         'productId': product.id,
         'quantity': e.value,
@@ -133,7 +190,57 @@ class _CheckoutPageState extends State<CheckoutPage> {
       return _OrderSuccessSection(orderId: _orderId!);
     }
 
+    if (_loadingProducts) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_loadError != null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Checkout')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(_loadError!, textAlign: TextAlign.center),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: _loadProducts,
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     final cart = context.watch<CartController>().items;
+
+    if (cart.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Checkout')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Your cart is empty.'),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () => context.go('/'),
+                  child: const Text('Back to Menu'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -201,7 +308,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     const SizedBox(height: 16),
                     _OrderSummary(
                       cart: cart,
-                      products: widget.products,
+                      products: _products,
                       itemCount: _itemCount(cart),
                       subtotal: _subtotal(cart),
                     ),

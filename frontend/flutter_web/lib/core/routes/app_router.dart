@@ -2,7 +2,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/admin/admin_page.dart';
 import '../../features/auth/admin_login_page.dart';
-import '../../models/product.dart';
 import '../../pages/checkout_page.dart';
 import '../../pages/home_page.dart';
 import '../auth/auth_controller.dart';
@@ -47,12 +46,10 @@ GoRouter buildAppRouter(AuthController authController) {
       GoRoute(
         path: '/checkout',
         builder: (context, state) {
-          final extra = state.extra as Map<String, dynamic>?;
+          final storeId =
+              int.tryParse(state.uri.queryParameters['storeId'] ?? '') ?? 0;
 
-          return CheckoutPage(
-            products: (extra?['products'] as List<Product>?) ?? const [],
-            storeId: (extra?['storeId'] as int?) ?? 0,
-          );
+          return CheckoutPage(storeId: storeId);
         },
       ),
       GoRoute(
