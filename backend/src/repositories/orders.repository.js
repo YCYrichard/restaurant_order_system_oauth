@@ -5,9 +5,9 @@ async function insertOrder(order, connection = db) {
     `
       INSERT INTO orders (
         user_id, store_id, total, customer_name, customer_phone,
-        customer_email, notes, fulfillment_type, delivery_address
+        customer_email, notes, fulfillment_type, delivery_address, table_number
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       order.userId || null,
@@ -19,6 +19,7 @@ async function insertOrder(order, connection = db) {
       order.notes || null,
       order.fulfillmentType || 'pickup',
       order.deliveryAddress || null,
+      order.tableNumber || null,
     ]
   );
 

@@ -57,8 +57,17 @@ GoRouter buildAppRouter(AuthController authController) {
         path: '/store/:storeId',
         builder: (context, state) {
           final storeId = int.tryParse(state.pathParameters['storeId'] ?? '');
+          // ?table=N arrives from a scanned table QR code and makes this a
+          // dine-in order.
+          final tableNumber =
+              int.tryParse(state.uri.queryParameters['table'] ?? '');
 
-          return HomePage(initialStoreId: storeId);
+          return HomePage(
+            initialStoreId: storeId,
+            tableNumber: tableNumber != null && tableNumber > 0
+                ? tableNumber
+                : null,
+          );
         },
       ),
       GoRoute(
@@ -66,8 +75,15 @@ GoRouter buildAppRouter(AuthController authController) {
         builder: (context, state) {
           final storeId =
               int.tryParse(state.uri.queryParameters['storeId'] ?? '') ?? 0;
+          final tableNumber =
+              int.tryParse(state.uri.queryParameters['table'] ?? '');
 
-          return CheckoutPage(storeId: storeId);
+          return CheckoutPage(
+            storeId: storeId,
+            tableNumber: tableNumber != null && tableNumber > 0
+                ? tableNumber
+                : null,
+          );
         },
       ),
       GoRoute(

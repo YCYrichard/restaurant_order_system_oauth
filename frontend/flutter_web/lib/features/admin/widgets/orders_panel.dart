@@ -291,18 +291,24 @@ class _OrdersPanelState extends State<OrdersPanel> {
             Row(
               children: [
                 Icon(
-                  fulfillmentType == 'delivery'
-                      ? Icons.delivery_dining
-                      : Icons.storefront,
+                  switch (fulfillmentType) {
+                    'delivery' => Icons.delivery_dining,
+                    'dine_in' => Icons.table_restaurant,
+                    _ => Icons.storefront,
+                  },
                   size: 14,
                   color: const Color(0xFF625D5A),
                 ),
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
-                    fulfillmentType == 'delivery'
-                        ? 'Delivery — ${order['delivery_address'] ?? 'no address'}'
-                        : 'Pickup',
+                    switch (fulfillmentType) {
+                      'delivery' =>
+                        'Delivery — ${order['delivery_address'] ?? 'no address'}',
+                      'dine_in' =>
+                        'Dine in — table ${order['table_number'] ?? '?'}',
+                      _ => 'Pickup',
+                    },
                     style: const TextStyle(
                       fontSize: 12,
                       color: Color(0xFF625D5A),

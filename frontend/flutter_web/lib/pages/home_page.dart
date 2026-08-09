@@ -26,7 +26,11 @@ class HomePage extends StatefulWidget {
   /// first from /stores/public - lets a store be linked to directly.
   final int? initialStoreId;
 
-  const HomePage({super.key, this.initialStoreId});
+  /// Set from /store/:storeId?table=N when a customer scans a table's QR
+  /// code. Implies a dine-in order for that table.
+  final int? tableNumber;
+
+  const HomePage({super.key, this.initialStoreId, this.tableNumber});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -207,7 +211,10 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    context.push('/checkout?storeId=$selectedStoreId');
+    final tableParam =
+        widget.tableNumber != null ? '&table=${widget.tableNumber}' : '';
+
+    context.push('/checkout?storeId=$selectedStoreId$tableParam');
   }
 
   @override
@@ -252,12 +259,46 @@ class _HomePageState extends State<HomePage> {
               onLine: () => _open('$apiBaseUrl/auth/line'),
               onLogout: () => context.read<AuthController>().logout(),
             ),
-            StoreSelectorSection(
-              stores: stores,
-              selectedStoreId: selectedStoreId,
-              isLoading: _loadingStores,
-              onSelectStore: _selectStore,
-            ),
+            if (widget.tableNumber != null)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF5EF),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.table_restaurant,
+                        color: Colors.deepOrange),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Ordering for table ${widget.tableNumber} — '
+                        'your order will be brought to your table.',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF625D5A),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            // Table QR codes are bound to one store, so hide the store
+            // switcher in that flow - changing store would silently
+            // invalidate the table.
+            if (widget.tableNumber == null)
+              StoreSelectorSection(
+                stores: stores,
+                selectedStoreId: selectedStoreId,
+                isLoading: _loadingStores,
+                onSelectStore: _selectStore,
+              ),
             if (_loadingMenu)
               const Padding(
                 padding: EdgeInsets.all(32),

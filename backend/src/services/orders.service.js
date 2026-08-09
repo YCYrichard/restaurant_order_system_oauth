@@ -12,7 +12,7 @@ const ORDER_STATUSES = [
   'cancelled',
 ];
 const TERMINAL_STATUSES = ['completed', 'cancelled'];
-const FULFILLMENT_TYPES = ['pickup', 'delivery'];
+const FULFILLMENT_TYPES = ['pickup', 'delivery', 'dine_in'];
 const FORWARD_TRANSITIONS = {
   pending: 'confirmed',
   confirmed: 'preparing',
@@ -106,6 +106,16 @@ function validateCreateOrderInput(input) {
     );
   }
 
+  if (fulfillmentType === 'dine_in') {
+    const parsedTableNumber = Number(input.tableNumber);
+
+    if (!Number.isInteger(parsedTableNumber) || parsedTableNumber <= 0) {
+      throw new OrderValidationError(
+        'A valid table number is required for dine-in orders'
+      );
+    }
+  }
+
   for (const item of items) {
     if (
       !item.productId ||
@@ -145,6 +155,7 @@ async function createOrder(input) {
     notes,
     fulfillmentType,
     deliveryAddress,
+    tableNumber,
   } = input;
 
   const connection = await db.getConnection();
@@ -165,6 +176,8 @@ async function createOrder(input) {
         fulfillmentType: fulfillmentType || 'pickup',
         deliveryAddress:
           fulfillmentType === 'delivery' ? deliveryAddress.trim() : null,
+        tableNumber:
+          fulfillmentType === 'dine_in' ? Number(tableNumber) : null,
       },
       connection
     );

@@ -13,9 +13,15 @@ import '../models/product.dart';
 class CheckoutPage extends StatefulWidget {
   final int storeId;
 
+  /// Carried over from a scanned table QR code. When set, this is a
+  /// dine-in order for that table and the pickup/delivery choice doesn't
+  /// apply.
+  final int? tableNumber;
+
   const CheckoutPage({
     super.key,
     required this.storeId,
+    this.tableNumber,
   });
 
   @override
@@ -43,6 +49,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
   @override
   void initState() {
     super.initState();
+
+    if (widget.tableNumber != null) {
+      _fulfillmentType = 'dine_in';
+    }
+
     _loadProducts();
   }
 
@@ -161,6 +172,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
       'deliveryAddress': _fulfillmentType == 'delivery'
           ? _addressController.text.trim()
           : null,
+      'tableNumber':
+          _fulfillmentType == 'dine_in' ? widget.tableNumber : null,
     };
 
     try {
@@ -309,43 +322,72 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       maxLines: 3,
                     ),
                     const SizedBox(height: 28),
-                    const Text(
-                      'How would you like your order?',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(
-                          value: 'pickup',
-                          label: Text('Pickup'),
-                          icon: Icon(Icons.storefront),
+                    if (widget.tableNumber != null) ...[
+                      // Dine-in: the table came from the scanned QR code, so
+                      // there's no fulfillment choice to make here.
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF5EF),
+                          borderRadius: BorderRadius.circular(16),
                         ),
-                        ButtonSegment(
-                          value: 'delivery',
-                          label: Text('Delivery'),
-                          icon: Icon(Icons.delivery_dining),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.table_restaurant,
+                                color: Colors.deepOrange),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Dine in — table ${widget.tableNumber}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ] else ...[
+                      const Text(
+                        'How would you like your order?',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      SegmentedButton<String>(
+                        segments: const [
+                          ButtonSegment(
+                            value: 'pickup',
+                            label: Text('Pickup'),
+                            icon: Icon(Icons.storefront),
+                          ),
+                          ButtonSegment(
+                            value: 'delivery',
+                            label: Text('Delivery'),
+                            icon: Icon(Icons.delivery_dining),
+                          ),
+                        ],
+                        selected: {_fulfillmentType},
+                        onSelectionChanged: (selection) {
+                          setState(() => _fulfillmentType = selection.first);
+                        },
+                      ),
+                      if (_fulfillmentType == 'delivery') ...[
+                        const SizedBox(height: 16),
+                        _ContactField(
+                          controller: _addressController,
+                          label: 'Delivery Address',
+                          icon: Icons.location_on,
+                          maxLines: 2,
+                          validator: (v) => (v == null || v.trim().isEmpty)
+                              ? 'Required for delivery'
+                              : null,
                         ),
                       ],
-                      selected: {_fulfillmentType},
-                      onSelectionChanged: (selection) {
-                        setState(() => _fulfillmentType = selection.first);
-                      },
-                    ),
-                    if (_fulfillmentType == 'delivery') ...[
-                      const SizedBox(height: 16),
-                      _ContactField(
-                        controller: _addressController,
-                        label: 'Delivery Address',
-                        icon: Icons.location_on,
-                        maxLines: 2,
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Required for delivery'
-                            : null,
-                      ),
                     ],
                     const SizedBox(height: 28),
                     const Text(

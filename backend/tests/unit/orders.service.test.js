@@ -155,6 +155,48 @@ describe('orders.service.createOrder fulfillment + item notes', () => {
     );
   });
 
+  test('requires a valid table number for dine-in orders', async () => {
+    await expect(
+      ordersService.createOrder({ ...validInput, fulfillmentType: 'dine_in' })
+    ).rejects.toThrow(/table number is required/);
+
+    await expect(
+      ordersService.createOrder({
+        ...validInput,
+        fulfillmentType: 'dine_in',
+        tableNumber: 0,
+      })
+    ).rejects.toThrow(/table number is required/);
+
+    expect(db.getConnection).not.toHaveBeenCalled();
+  });
+
+  test('persists the table number for dine-in orders', async () => {
+    await ordersService.createOrder({
+      ...validInput,
+      fulfillmentType: 'dine_in',
+      tableNumber: '5',
+    });
+
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fulfillmentType: 'dine_in',
+        tableNumber: 5,
+        deliveryAddress: null,
+      }),
+      mockConnection
+    );
+  });
+
+  test('does not carry a table number on non-dine-in orders', async () => {
+    await ordersService.createOrder({ ...validInput, tableNumber: 9 });
+
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ tableNumber: null }),
+      mockConnection
+    );
+  });
+
   test('passes per-item notes through to the repository', async () => {
     const items = [
       { productId: 1, quantity: 2, price: 10, notes: 'No onions' },

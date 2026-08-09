@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../core/auth/auth_controller.dart';
 import '../../core/constants/app_config.dart';
 import 'widgets/orders_panel.dart';
+import 'widgets/table_qr_panel.dart';
 import 'widgets/users_panel.dart';
 
 class AdminPage extends StatefulWidget {
@@ -1451,6 +1452,8 @@ class _AdminPageState extends State<AdminPage> {
                 ),
                 const SizedBox(height: 20),
                 OrdersPanel(selectedStore: selectedStore),
+                const SizedBox(height: 20),
+                TableQrPanel(selectedStore: selectedStore),
                 const SizedBox(height: 20),
                 UsersPanel(stores: stores),
               ],
