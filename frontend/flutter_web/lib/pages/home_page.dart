@@ -279,16 +279,17 @@ class _HomePageState extends State<HomePage> {
             else
               MenuProductsSection(
                 groupedProducts: groupedProducts,
-                cart: cart.items,
+                cart: cart.quantitiesByProduct,
                 onAddToCart: _addToCart,
               ),
             CartSummarySection(
-              cart: cart.items,
+              lines: cart.lines,
               getProductById: getProductById,
               cartItemCount: cartItemCount,
               cartSubtotal: cartSubtotal,
               onIncreaseQty: cart.increase,
               onDecreaseQty: cart.decrease,
+              onSetNotes: cart.setNotes,
               onClearCart: cart.clear,
               onCheckoutTap: () => _goToCheckout(cart),
             ),

@@ -3,28 +3,72 @@ import 'package:flutter/material.dart';
 import '../../../core/widgets/section_container.dart';
 import '../../../core/widgets/stat_chip.dart';
 import '../../../models/product.dart';
+import '../cart_controller.dart';
 
 class CartSummarySection extends StatelessWidget {
-  final Map<int, int> cart;
+  final List<CartLine> lines;
   final Product Function(int productId) getProductById;
   final int cartItemCount;
   final double cartSubtotal;
-  final void Function(int productId) onIncreaseQty;
-  final void Function(int productId) onDecreaseQty;
+  final void Function(int lineId) onIncreaseQty;
+  final void Function(int lineId) onDecreaseQty;
+  final void Function(int lineId, String? notes) onSetNotes;
   final VoidCallback onClearCart;
   final VoidCallback onCheckoutTap;
 
   const CartSummarySection({
     super.key,
-    required this.cart,
+    required this.lines,
     required this.getProductById,
     required this.cartItemCount,
     required this.cartSubtotal,
     required this.onIncreaseQty,
     required this.onDecreaseQty,
+    required this.onSetNotes,
     required this.onClearCart,
     required this.onCheckoutTap,
   });
+
+  Future<void> _editNotes(BuildContext context, CartLine line) async {
+    final controller = TextEditingController(text: line.notes ?? '');
+
+    final result = await showDialog<String?>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text('Special request — ${getProductById(line.productId).name}'),
+          content: SizedBox(
+            width: 420,
+            child: TextField(
+              controller: controller,
+              autofocus: true,
+              maxLength: 255,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'e.g. no onions, extra spicy',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(controller.text),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result != null) {
+      onSetNotes(line.id, result);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +77,7 @@ class CartSummarySection extends StatelessWidget {
       title: 'Cart summary',
       subtitle:
           'A good ordering flow keeps item count, subtotal, and quantity controls visible before checkout.',
-      child: cart.isEmpty
+      child: lines.isEmpty
           ? Container(
               width: double.infinity,
               padding: const EdgeInsets.all(24),
@@ -78,10 +122,9 @@ class CartSummarySection extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 18),
-                ...cart.entries.map((entry) {
-                  final product = getProductById(entry.key);
-                  final qty = entry.value;
-                  final lineTotal = product.price * qty;
+                ...lines.map((line) {
+                  final product = getProductById(line.productId);
+                  final lineTotal = product.price * line.quantity;
 
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 12),
@@ -93,63 +136,87 @@ class CartSummarySection extends StatelessWidget {
                       ),
                       child: Padding(
                         padding: const EdgeInsets.all(18),
-                        child: Row(
+                        child: Column(
                           children: [
-                            CircleAvatar(
-                              backgroundColor:
-                                  Colors.deepOrange.withValues(alpha: 0.10),
-                              child: const Icon(
-                                Icons.restaurant_menu,
-                                color: Colors.deepOrange,
-                              ),
-                            ),
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    product.name,
+                            Row(
+                              children: [
+                                CircleAvatar(
+                                  backgroundColor:
+                                      Colors.deepOrange.withValues(alpha: 0.10),
+                                  child: const Icon(
+                                    Icons.restaurant_menu,
+                                    color: Colors.deepOrange,
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        product.name,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '\$${product.price.toStringAsFixed(2)} each',
+                                        style: const TextStyle(
+                                          color: Color(0xFF625D5A),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  onPressed: () => onDecreaseQty(line.id),
+                                  icon: const Icon(Icons.remove_circle_outline),
+                                ),
+                                Text(
+                                  '${line.quantity}',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                IconButton(
+                                  onPressed: () => onIncreaseQty(line.id),
+                                  icon: const Icon(Icons.add_circle_outline),
+                                ),
+                                const SizedBox(width: 8),
+                                SizedBox(
+                                  width: 88,
+                                  child: Text(
+                                    '\$${lineTotal.toStringAsFixed(2)}',
+                                    textAlign: TextAlign.right,
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w800,
                                       fontSize: 16,
+                                      color: Colors.deepOrange,
                                     ),
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '\$${product.price.toStringAsFixed(2)} each',
-                                    style: const TextStyle(
-                                      color: Color(0xFF625D5A),
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
-                            IconButton(
-                              onPressed: () => onDecreaseQty(product.id),
-                              icon: const Icon(Icons.remove_circle_outline),
-                            ),
-                            Text(
-                              '$qty',
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            IconButton(
-                              onPressed: () => onIncreaseQty(product.id),
-                              icon: const Icon(Icons.add_circle_outline),
-                            ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: 88,
-                              child: Text(
-                                '\$${lineTotal.toStringAsFixed(2)}',
-                                textAlign: TextAlign.right,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 16,
-                                  color: Colors.deepOrange,
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: TextButton.icon(
+                                onPressed: () => _editNotes(context, line),
+                                icon: Icon(
+                                  line.notes == null
+                                      ? Icons.note_add_outlined
+                                      : Icons.edit_note,
+                                  size: 18,
+                                ),
+                                label: Text(
+                                  line.notes == null
+                                      ? 'Add special request'
+                                      : line.notes!,
+                                  style: const TextStyle(fontSize: 13),
                                 ),
                               ),
                             ),

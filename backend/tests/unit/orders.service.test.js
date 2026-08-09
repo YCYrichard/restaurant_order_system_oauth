@@ -88,6 +88,88 @@ describe('orders.service.createOrder', () => {
   });
 });
 
+describe('orders.service.createOrder fulfillment + item notes', () => {
+  let mockConnection;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+
+    mockConnection = {
+      beginTransaction: jest.fn().mockResolvedValue(undefined),
+      commit: jest.fn().mockResolvedValue(undefined),
+      rollback: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn(),
+    };
+
+    db.getConnection.mockResolvedValue(mockConnection);
+    ordersRepository.insertOrder.mockResolvedValue(42);
+    ordersRepository.insertOrderItems.mockResolvedValue(undefined);
+    ordersRepository.findOrderWithItems.mockResolvedValue({ id: 42 });
+  });
+
+  test('rejects an unknown fulfillmentType', async () => {
+    await expect(
+      ordersService.createOrder({ ...validInput, fulfillmentType: 'teleport' })
+    ).rejects.toThrow(/fulfillmentType must be one of/);
+
+    expect(db.getConnection).not.toHaveBeenCalled();
+  });
+
+  test('requires a delivery address for delivery orders', async () => {
+    await expect(
+      ordersService.createOrder({
+        ...validInput,
+        fulfillmentType: 'delivery',
+        deliveryAddress: '   ',
+      })
+    ).rejects.toThrow(/delivery address is required/);
+
+    expect(db.getConnection).not.toHaveBeenCalled();
+  });
+
+  test('defaults to pickup and nulls the address when unspecified', async () => {
+    await ordersService.createOrder(validInput);
+
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fulfillmentType: 'pickup',
+        deliveryAddress: null,
+      }),
+      mockConnection
+    );
+  });
+
+  test('persists a trimmed delivery address for delivery orders', async () => {
+    await ordersService.createOrder({
+      ...validInput,
+      fulfillmentType: 'delivery',
+      deliveryAddress: '  12 Main St  ',
+    });
+
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fulfillmentType: 'delivery',
+        deliveryAddress: '12 Main St',
+      }),
+      mockConnection
+    );
+  });
+
+  test('passes per-item notes through to the repository', async () => {
+    const items = [
+      { productId: 1, quantity: 2, price: 10, notes: 'No onions' },
+    ];
+
+    await ordersService.createOrder({ ...validInput, items });
+
+    expect(ordersRepository.insertOrderItems).toHaveBeenCalledWith(
+      42,
+      items,
+      mockConnection
+    );
+  });
+});
+
 describe('orders.service.updateOrderStatus', () => {
   const adminUser = { id: 1, role: 'admin' };
   const ownerUser = { id: 2, role: 'customer' };

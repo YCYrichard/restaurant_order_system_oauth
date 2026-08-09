@@ -238,6 +238,8 @@ class _OrdersPanelState extends State<OrdersPanel> {
     final total = double.tryParse(order['total'].toString()) ?? 0;
     final items =
         order['items'] is List ? List.from(order['items']) : const [];
+    final fulfillmentType =
+        order['fulfillment_type']?.toString() ?? 'pickup';
     final nextStatus = _nextStatus(status);
     final isTerminal = status == 'completed' || status == 'cancelled';
 
@@ -286,11 +288,45 @@ class _OrdersPanelState extends State<OrdersPanel> {
               ],
             ),
             const SizedBox(height: 6),
-            Text(
-              items
-                  .map((item) => '${item['product_name']} x${item['quantity']}')
-                  .join(', '),
-              style: const TextStyle(fontSize: 12, color: Color(0xFF625D5A)),
+            Row(
+              children: [
+                Icon(
+                  fulfillmentType == 'delivery'
+                      ? Icons.delivery_dining
+                      : Icons.storefront,
+                  size: 14,
+                  color: const Color(0xFF625D5A),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    fulfillmentType == 'delivery'
+                        ? 'Delivery — ${order['delivery_address'] ?? 'no address'}'
+                        : 'Pickup',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF625D5A),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            ...items.map(
+              (item) => Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Text(
+                  '${item['product_name']} x${item['quantity']}'
+                  '${item['notes'] != null ? '  ·  ${item['notes']}' : ''}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: const Color(0xFF625D5A),
+                    fontStyle: item['notes'] != null
+                        ? FontStyle.italic
+                        : FontStyle.normal,
+                  ),
+                ),
+              ),
             ),
             const SizedBox(height: 10),
             Row(

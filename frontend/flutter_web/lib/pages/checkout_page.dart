@@ -29,10 +29,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
   final _phoneController = TextEditingController();
   final _emailController = TextEditingController();
   final _notesController = TextEditingController();
+  final _addressController = TextEditingController();
 
   bool _isSubmitting = false;
   String? _orderId;
   String? _errorMessage;
+  String _fulfillmentType = 'pickup';
 
   List<Product> _products = [];
   bool _loadingProducts = true;
@@ -50,6 +52,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _phoneController.dispose();
     _emailController.dispose();
     _notesController.dispose();
+    _addressController.dispose();
     super.dispose();
   }
 
@@ -73,10 +76,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
       // from a different store).
       final validIds = products.map((p) => p.id).toSet();
       final cart = context.read<CartController>();
-      for (final productId in cart.items.keys.toList()) {
-        if (!validIds.contains(productId)) {
-          cart.remove(productId);
-        }
+      final staleProductIds = cart.lines
+          .map((line) => line.productId)
+          .where((productId) => !validIds.contains(productId))
+          .toSet();
+
+      for (final productId in staleProductIds) {
+        cart.removeProduct(productId);
       }
 
       setState(() {
@@ -100,22 +106,22 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
   }
 
-  double _subtotal(Map<int, int> cart) {
+  double _subtotal(List<CartLine> lines) {
     double total = 0;
-    for (final entry in cart.entries) {
-      final product = _products.firstWhere((p) => p.id == entry.key);
-      total += product.price * entry.value;
+    for (final line in lines) {
+      final product = _products.firstWhere((p) => p.id == line.productId);
+      total += product.price * line.quantity;
     }
     return total;
   }
 
-  int _itemCount(Map<int, int> cart) {
-    return cart.values.fold(0, (sum, qty) => sum + qty);
+  int _itemCount(List<CartLine> lines) {
+    return lines.fold(0, (sum, line) => sum + line.quantity);
   }
 
-  Future<void> _submitOrder(Map<int, int> cart) async {
+  Future<void> _submitOrder(List<CartLine> lines) async {
     if (!_formKey.currentState!.validate()) return;
-    if (cart.isEmpty) {
+    if (lines.isEmpty) {
       setState(() => _errorMessage = 'Your cart is empty.');
       return;
     }
@@ -128,12 +134,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final userId = context.read<AuthController>().userId;
     final storeId = widget.storeId;
 
-    final items = cart.entries.map((e) {
-      final product = _products.firstWhere((p) => p.id == e.key);
+    final items = lines.map((line) {
+      final product = _products.firstWhere((p) => p.id == line.productId);
       return {
         'productId': product.id,
-        'quantity': e.value,
+        'quantity': line.quantity,
         'price': product.price,
+        'notes': line.notes,
       };
     }).toList();
 
@@ -141,7 +148,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       'userId': userId,
       'storeId': storeId,
       'items': items,
-      'total': _subtotal(cart),
+      'total': _subtotal(lines),
       'customerName': _nameController.text.trim(),
       'customerPhone': _phoneController.text.trim(),
       'customerEmail': _emailController.text.trim().isEmpty
@@ -150,6 +157,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
       'notes': _notesController.text.trim().isEmpty
           ? null
           : _notesController.text.trim(),
+      'fulfillmentType': _fulfillmentType,
+      'deliveryAddress': _fulfillmentType == 'delivery'
+          ? _addressController.text.trim()
+          : null,
     };
 
     try {
@@ -218,9 +229,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
       );
     }
 
-    final cart = context.watch<CartController>().items;
+    final lines = context.watch<CartController>().lines;
 
-    if (cart.isEmpty) {
+    if (lines.isEmpty) {
       return Scaffold(
         appBar: AppBar(title: const Text('Checkout')),
         body: Center(
@@ -299,6 +310,45 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     ),
                     const SizedBox(height: 28),
                     const Text(
+                      'How would you like your order?',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(
+                          value: 'pickup',
+                          label: Text('Pickup'),
+                          icon: Icon(Icons.storefront),
+                        ),
+                        ButtonSegment(
+                          value: 'delivery',
+                          label: Text('Delivery'),
+                          icon: Icon(Icons.delivery_dining),
+                        ),
+                      ],
+                      selected: {_fulfillmentType},
+                      onSelectionChanged: (selection) {
+                        setState(() => _fulfillmentType = selection.first);
+                      },
+                    ),
+                    if (_fulfillmentType == 'delivery') ...[
+                      const SizedBox(height: 16),
+                      _ContactField(
+                        controller: _addressController,
+                        label: 'Delivery Address',
+                        icon: Icons.location_on,
+                        maxLines: 2,
+                        validator: (v) => (v == null || v.trim().isEmpty)
+                            ? 'Required for delivery'
+                            : null,
+                      ),
+                    ],
+                    const SizedBox(height: 28),
+                    const Text(
                       'Order Summary',
                       style: TextStyle(
                         fontSize: 24,
@@ -307,10 +357,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     ),
                     const SizedBox(height: 16),
                     _OrderSummary(
-                      cart: cart,
+                      lines: lines,
                       products: _products,
-                      itemCount: _itemCount(cart),
-                      subtotal: _subtotal(cart),
+                      itemCount: _itemCount(lines),
+                      subtotal: _subtotal(lines),
                     ),
                     const SizedBox(height: 24),
                     if (_errorMessage != null) ...[
@@ -335,7 +385,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       alignment: Alignment.centerRight,
                       child: FilledButton.icon(
                         onPressed:
-                            _isSubmitting ? null : () => _submitOrder(cart),
+                            _isSubmitting ? null : () => _submitOrder(lines),
                         icon: _isSubmitting
                             ? const SizedBox(
                                 width: 20,
@@ -398,13 +448,13 @@ class _ContactField extends StatelessWidget {
 }
 
 class _OrderSummary extends StatelessWidget {
-  final Map<int, int> cart;
+  final List<CartLine> lines;
   final List<Product> products;
   final int itemCount;
   final double subtotal;
 
   const _OrderSummary({
-    required this.cart,
+    required this.lines,
     required this.products,
     required this.itemCount,
     required this.subtotal,
@@ -437,22 +487,37 @@ class _OrderSummary extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 18),
-          ...cart.entries.map((entry) {
-            final product = products.firstWhere((p) => p.id == entry.key);
-            final qty = entry.value;
-            final lineTotal = product.price * qty;
+          ...lines.map((line) {
+            final product =
+                products.firstWhere((p) => p.id == line.productId);
+            final lineTotal = product.price * line.quantity;
 
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Text(
-                      '${product.name} x$qty',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 16,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${product.name} x${line.quantity}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16,
+                          ),
+                        ),
+                        if (line.notes != null)
+                          Text(
+                            line.notes!,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontStyle: FontStyle.italic,
+                              color: Color(0xFF625D5A),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                   Text(

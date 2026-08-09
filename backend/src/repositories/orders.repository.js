@@ -4,9 +4,10 @@ async function insertOrder(order, connection = db) {
   const [result] = await connection.execute(
     `
       INSERT INTO orders (
-        user_id, store_id, total, customer_name, customer_phone, customer_email, notes
+        user_id, store_id, total, customer_name, customer_phone,
+        customer_email, notes, fulfillment_type, delivery_address
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       order.userId || null,
@@ -16,6 +17,8 @@ async function insertOrder(order, connection = db) {
       order.customerPhone,
       order.customerEmail || null,
       order.notes || null,
+      order.fulfillmentType || 'pickup',
+      order.deliveryAddress || null,
     ]
   );
 
@@ -28,14 +31,15 @@ async function insertOrderItems(orderId, items, connection = db) {
     item.productId,
     item.quantity,
     item.price,
+    item.notes || null,
   ]);
 
-  const placeholders = itemValues.map(() => '(?, ?, ?, ?)').join(', ');
+  const placeholders = itemValues.map(() => '(?, ?, ?, ?, ?)').join(', ');
   const flatValues = itemValues.flat();
 
   await connection.execute(
     `
-      INSERT INTO order_items (order_id, product_id, quantity, price)
+      INSERT INTO order_items (order_id, product_id, quantity, price, notes)
       VALUES ${placeholders}
     `,
     flatValues

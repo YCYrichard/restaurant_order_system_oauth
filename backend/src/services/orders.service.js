@@ -12,6 +12,7 @@ const ORDER_STATUSES = [
   'cancelled',
 ];
 const TERMINAL_STATUSES = ['completed', 'cancelled'];
+const FULFILLMENT_TYPES = ['pickup', 'delivery'];
 const FORWARD_TRANSITIONS = {
   pending: 'confirmed',
   confirmed: 'preparing',
@@ -66,7 +67,15 @@ function computeItemsTotal(items) {
 }
 
 function validateCreateOrderInput(input) {
-  const { storeId, items, total, customerName, customerPhone } = input;
+  const {
+    storeId,
+    items,
+    total,
+    customerName,
+    customerPhone,
+    fulfillmentType,
+    deliveryAddress,
+  } = input;
 
   if (
     !storeId ||
@@ -77,6 +86,24 @@ function validateCreateOrderInput(input) {
     !customerPhone
   ) {
     throw new OrderValidationError('Missing required fields');
+  }
+
+  if (
+    fulfillmentType !== undefined &&
+    !FULFILLMENT_TYPES.includes(fulfillmentType)
+  ) {
+    throw new OrderValidationError(
+      `fulfillmentType must be one of: ${FULFILLMENT_TYPES.join(', ')}`
+    );
+  }
+
+  if (
+    fulfillmentType === 'delivery' &&
+    (typeof deliveryAddress !== 'string' || !deliveryAddress.trim())
+  ) {
+    throw new OrderValidationError(
+      'A delivery address is required for delivery orders'
+    );
   }
 
   for (const item of items) {
@@ -116,6 +143,8 @@ async function createOrder(input) {
     customerPhone,
     customerEmail,
     notes,
+    fulfillmentType,
+    deliveryAddress,
   } = input;
 
   const connection = await db.getConnection();
@@ -125,7 +154,18 @@ async function createOrder(input) {
     await connection.beginTransaction();
 
     orderId = await ordersRepository.insertOrder(
-      { userId, storeId, total, customerName, customerPhone, customerEmail, notes },
+      {
+        userId,
+        storeId,
+        total,
+        customerName,
+        customerPhone,
+        customerEmail,
+        notes,
+        fulfillmentType: fulfillmentType || 'pickup',
+        deliveryAddress:
+          fulfillmentType === 'delivery' ? deliveryAddress.trim() : null,
+      },
       connection
     );
 
