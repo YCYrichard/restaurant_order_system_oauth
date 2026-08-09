@@ -52,3 +52,29 @@ exports.getOrderById = async (req, res, next) => {
     next(error);
   }
 };
+
+exports.updateOrderStatus = async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    const order = await ordersService.updateOrderStatus(
+      orderId,
+      req.user,
+      req.body.status
+    );
+
+    res.status(200).json({ order });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getOrdersByStore = async (req, res, next) => {
+  try {
+    const storeId = Number(req.params.storeId);
+    const orders = await ordersService.listOrdersForStore(storeId, req.user);
+
+    res.status(200).json({ orders });
+  } catch (error) {
+    next(error);
+  }
+};

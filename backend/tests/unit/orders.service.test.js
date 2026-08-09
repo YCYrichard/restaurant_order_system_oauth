@@ -87,3 +87,158 @@ describe('orders.service.createOrder', () => {
     expect(ordersRepository.findOrderWithItems).not.toHaveBeenCalled();
   });
 });
+
+describe('orders.service.updateOrderStatus', () => {
+  const adminUser = { id: 1, role: 'admin' };
+  const ownerUser = { id: 2, role: 'customer' };
+
+  beforeEach(() => jest.clearAllMocks());
+
+  test('rejects an invalid status value before touching the database', async () => {
+    await expect(
+      ordersService.updateOrderStatus(5, adminUser, 'not-a-real-status')
+    ).rejects.toThrow(ordersService.OrderValidationError);
+
+    expect(ordersRepository.findOrderById).not.toHaveBeenCalled();
+  });
+
+  test('throws OrderNotFoundError when the order does not exist', async () => {
+    ordersRepository.findOrderById.mockResolvedValue(null);
+
+    await expect(
+      ordersService.updateOrderStatus(5, adminUser, 'confirmed')
+    ).rejects.toThrow(ordersService.OrderNotFoundError);
+  });
+
+  test('throws OrderAccessDeniedError when a non-admin has no store access', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      status: 'pending',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(false);
+
+    await expect(
+      ordersService.updateOrderStatus(5, ownerUser, 'confirmed')
+    ).rejects.toThrow(ordersService.OrderAccessDeniedError);
+  });
+
+  test('allows a valid forward transition', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      status: 'pending',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+    ordersRepository.updateOrderStatus.mockResolvedValue(true);
+    ordersRepository.findOrderWithItems.mockResolvedValue({
+      id: 5,
+      status: 'confirmed',
+    });
+
+    const result = await ordersService.updateOrderStatus(
+      5,
+      ownerUser,
+      'confirmed'
+    );
+
+    expect(ordersRepository.updateOrderStatus).toHaveBeenCalledWith(
+      5,
+      'confirmed'
+    );
+    expect(result).toEqual({ id: 5, status: 'confirmed' });
+  });
+
+  test('rejects skipping a step in the sequence', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      status: 'pending',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+
+    await expect(
+      ordersService.updateOrderStatus(5, ownerUser, 'ready')
+    ).rejects.toThrow(/Cannot transition/);
+
+    expect(ordersRepository.updateOrderStatus).not.toHaveBeenCalled();
+  });
+
+  test('allows cancelling from any non-terminal state', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      status: 'preparing',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+    ordersRepository.updateOrderStatus.mockResolvedValue(true);
+    ordersRepository.findOrderWithItems.mockResolvedValue({
+      id: 5,
+      status: 'cancelled',
+    });
+
+    const result = await ordersService.updateOrderStatus(
+      5,
+      ownerUser,
+      'cancelled'
+    );
+
+    expect(result.status).toBe('cancelled');
+  });
+
+  test('rejects any transition once an order is completed', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      status: 'completed',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+
+    await expect(
+      ordersService.updateOrderStatus(5, ownerUser, 'cancelled')
+    ).rejects.toThrow(/Cannot transition/);
+  });
+
+  test('an admin bypasses the store-access check entirely', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      status: 'pending',
+    });
+    ordersRepository.updateOrderStatus.mockResolvedValue(true);
+    ordersRepository.findOrderWithItems.mockResolvedValue({
+      id: 5,
+      status: 'confirmed',
+    });
+
+    await ordersService.updateOrderStatus(5, adminUser, 'confirmed');
+
+    expect(ordersRepository.hasStoreAccess).not.toHaveBeenCalled();
+  });
+});
+
+describe('orders.service.listOrdersForStore', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('denies a non-admin with no access to the store', async () => {
+    ordersRepository.hasStoreAccess.mockResolvedValue(false);
+
+    await expect(
+      ordersService.listOrdersForStore(10, { id: 2, role: 'customer' })
+    ).rejects.toThrow(ordersService.OrderAccessDeniedError);
+
+    expect(ordersRepository.findOrdersByStore).not.toHaveBeenCalled();
+  });
+
+  test('returns orders for an admin without checking store access', async () => {
+    ordersRepository.findOrdersByStore.mockResolvedValue([{ id: 1 }]);
+
+    const result = await ordersService.listOrdersForStore(10, {
+      id: 1,
+      role: 'admin',
+    });
+
+    expect(ordersRepository.hasStoreAccess).not.toHaveBeenCalled();
+    expect(result).toEqual([{ id: 1 }]);
+  });
+});

@@ -4,6 +4,7 @@ import '../../features/admin/admin_page.dart';
 import '../../features/auth/admin_login_page.dart';
 import '../../pages/checkout_page.dart';
 import '../../pages/home_page.dart';
+import '../../pages/my_orders_page.dart';
 import '../auth/auth_controller.dart';
 import 'auth_callback_page.dart';
 
@@ -31,6 +32,13 @@ GoRouter buildAppRouter(AuthController authController) {
         return '/admin/login';
       }
 
+      // There's no standalone customer login page - SocialLoginSection lives
+      // inside HomePage - so send signed-out visitors there rather than to a
+      // dedicated login route.
+      if (location == '/my-orders' && !authController.isLoggedIn) {
+        return '/';
+      }
+
       if ((location == '/admin/login' || location == '/') &&
           isAuthenticatedAdmin) {
         return '/admin';
@@ -51,6 +59,10 @@ GoRouter buildAppRouter(AuthController authController) {
 
           return CheckoutPage(storeId: storeId);
         },
+      ),
+      GoRoute(
+        path: '/my-orders',
+        builder: (context, state) => const MyOrdersPage(),
       ),
       GoRoute(
         path: '/admin/login',

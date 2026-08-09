@@ -62,6 +62,11 @@ class TopBar extends StatelessWidget {
           onPressed: onCheckoutTap,
           child: const Text('Checkout'),
         ),
+        if (isLoggedIn)
+          TextButton(
+            onPressed: () => context.go('/my-orders'),
+            child: const Text('My Orders'),
+          ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4),
           child: Stack(

@@ -144,6 +144,34 @@ describe('categories: cross-store authorization boundary', () => {
   });
 });
 
+describe('orders: store-scoped listing authorization boundary', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('a user with no access to the store is denied by requireStoreAccess', async () => {
+    db.execute.mockResolvedValueOnce([[]]); // requireStoreAccess: no grant
+
+    const res = await request(app)
+      .get('/orders/store/10')
+      .set('Authorization', `Bearer ${outsiderToken}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  test('a user with access to the store can list its orders', async () => {
+    db.execute
+      .mockResolvedValueOnce([[{ id: 1 }]]) // requireStoreAccess: grant found
+      .mockResolvedValueOnce([[{ id: 1 }]]) // service-level hasStoreAccess re-check
+      .mockResolvedValueOnce([[]]); // findOrdersByStore
+
+    const res = await request(app)
+      .get('/orders/store/10')
+      .set('Authorization', `Bearer ${outsiderToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.orders).toEqual([]);
+  });
+});
+
 describe('users resource: admin-only boundary', () => {
   beforeEach(() => jest.clearAllMocks());
 

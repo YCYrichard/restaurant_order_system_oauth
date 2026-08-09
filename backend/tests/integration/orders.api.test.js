@@ -7,6 +7,8 @@ jest.mock('../../src/services/orders.service', () => {
     createOrder: jest.fn(),
     getOrdersForUser: jest.fn(),
     getOrderById: jest.fn(),
+    updateOrderStatus: jest.fn(),
+    listOrdersForStore: jest.fn(),
   };
 });
 
@@ -151,5 +153,78 @@ describe('GET /orders/:orderId', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.order).toEqual({ id: 5, user_id: 1 });
+  });
+});
+
+describe('PATCH /orders/:orderId/status', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('rejects unauthenticated requests', async () => {
+    const res = await request(app)
+      .patch('/orders/5/status')
+      .send({ status: 'confirmed' });
+
+    expect(res.status).toBe(401);
+    expect(ordersService.updateOrderStatus).not.toHaveBeenCalled();
+  });
+
+  test('returns the stable error shape when the service rejects the transition', async () => {
+    ordersService.updateOrderStatus.mockRejectedValue(
+      new ordersService.OrderValidationError(
+        "Cannot transition order from 'completed' to 'cancelled'"
+      )
+    );
+    const token = tokenFor({ id: 1, role: 'admin' });
+
+    const res = await request(app)
+      .patch('/orders/5/status')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'cancelled' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('ORDER_VALIDATION_ERROR');
+  });
+
+  test('returns the updated order on success', async () => {
+    ordersService.updateOrderStatus.mockResolvedValue({
+      id: 5,
+      status: 'confirmed',
+    });
+    const token = tokenFor({ id: 1, role: 'admin' });
+
+    const res = await request(app)
+      .patch('/orders/5/status')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'confirmed' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.order).toEqual({ id: 5, status: 'confirmed' });
+    expect(ordersService.updateOrderStatus).toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ id: 1, role: 'admin' }),
+      'confirmed'
+    );
+  });
+});
+
+describe('GET /orders/store/:storeId', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('rejects unauthenticated requests', async () => {
+    const res = await request(app).get('/orders/store/10');
+    expect(res.status).toBe(401);
+    expect(ordersService.listOrdersForStore).not.toHaveBeenCalled();
+  });
+
+  test('returns orders for an admin (bypasses the store-access DB check)', async () => {
+    ordersService.listOrdersForStore.mockResolvedValue([{ id: 1 }]);
+    const token = tokenFor({ id: 1, role: 'admin' });
+
+    const res = await request(app)
+      .get('/orders/store/10')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.orders).toEqual([{ id: 1 }]);
   });
 });
