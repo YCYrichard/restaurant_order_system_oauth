@@ -2,6 +2,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/admin/admin_page.dart';
 import '../../features/auth/admin_login_page.dart';
+import '../../features/kitchen/kitchen_page.dart';
 import '../../pages/checkout_page.dart';
 import '../../pages/home_page.dart';
 import '../../pages/my_orders_page.dart';
@@ -37,6 +38,12 @@ GoRouter buildAppRouter(AuthController authController) {
       // dedicated login route.
       if (location == '/my-orders' && !authController.isLoggedIn) {
         return '/';
+      }
+
+      // Kitchen staff sign in through the same local-login screen as
+      // admins; the store scoping is enforced server-side.
+      if (location == '/kitchen' && !authController.isLoggedIn) {
+        return '/admin/login';
       }
 
       if ((location == '/admin/login' || location == '/') &&
@@ -89,6 +96,14 @@ GoRouter buildAppRouter(AuthController authController) {
       GoRoute(
         path: '/my-orders',
         builder: (context, state) => const MyOrdersPage(),
+      ),
+      // Signed-in only, deliberately not admin-gated: the backend's
+      // requireStoreAccess on /orders/store/:storeId is the real
+      // enforcement, and gating on isAdmin here would lock out the staff
+      // accounts this screen exists for.
+      GoRoute(
+        path: '/kitchen',
+        builder: (context, state) => const KitchenPage(),
       ),
       GoRoute(
         path: '/admin/login',

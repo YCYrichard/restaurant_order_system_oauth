@@ -46,9 +46,18 @@ class OrderAccessDeniedError extends Error {
   }
 }
 
-// Cancel is allowed from any non-terminal state; otherwise status can only
-// advance one step at a time through the fixed pending -> ... -> completed
-// sequence. Nothing is valid once an order is completed or cancelled.
+// Reverse of FORWARD_TRANSITIONS, so a mis-bump on the kitchen display can
+// be recalled one step (e.g. preparing -> confirmed). Mis-bumps are routine
+// on a busy pass, and without this the only escape from a wrong tap is
+// cancelling a live order.
+const BACKWARD_TRANSITIONS = Object.fromEntries(
+  Object.entries(FORWARD_TRANSITIONS).map(([from, to]) => [to, from])
+);
+
+// Cancel is allowed from any non-terminal state; otherwise status moves one
+// step at a time along the pending -> ... -> completed sequence, forward or
+// back. Nothing is valid once an order is completed or cancelled - a
+// finished order stays finished.
 function isValidTransition(currentStatus, nextStatus) {
   if (TERMINAL_STATUSES.includes(currentStatus)) {
     return false;
@@ -58,7 +67,10 @@ function isValidTransition(currentStatus, nextStatus) {
     return true;
   }
 
-  return FORWARD_TRANSITIONS[currentStatus] === nextStatus;
+  return (
+    FORWARD_TRANSITIONS[currentStatus] === nextStatus ||
+    BACKWARD_TRANSITIONS[currentStatus] === nextStatus
+  );
 }
 
 function computeItemsTotal(items) {
@@ -297,7 +309,7 @@ async function updateOrderStatus(orderId, user, status) {
   return ordersRepository.findOrderWithItems(orderId);
 }
 
-async function listOrdersForStore(storeId, user) {
+async function listOrdersForStore(storeId, user, { activeOnly = false } = {}) {
   if (user.role !== 'admin') {
     const hasAccess = await ordersRepository.hasStoreAccess(
       user.id,
@@ -309,7 +321,7 @@ async function listOrdersForStore(storeId, user) {
     }
   }
 
-  return ordersRepository.findOrdersByStore(storeId);
+  return ordersRepository.findOrdersByStore(storeId, { activeOnly });
 }
 
 module.exports = {

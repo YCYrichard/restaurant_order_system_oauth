@@ -396,6 +396,47 @@ describe('orders.service.updateOrderStatus', () => {
     expect(result).toEqual({ id: 5, status: 'confirmed' });
   });
 
+  test('allows recalling one step back after a mis-bump', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      status: 'preparing',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+    ordersRepository.updateOrderStatus.mockResolvedValue(true);
+    ordersRepository.findOrderWithItems.mockResolvedValue({
+      id: 5,
+      status: 'confirmed',
+    });
+
+    const result = await ordersService.updateOrderStatus(
+      5,
+      ownerUser,
+      'confirmed'
+    );
+
+    expect(ordersRepository.updateOrderStatus).toHaveBeenCalledWith(
+      5,
+      'confirmed'
+    );
+    expect(result.status).toBe('confirmed');
+  });
+
+  test('rejects jumping more than one step backward', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      status: 'ready',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+
+    await expect(
+      ordersService.updateOrderStatus(5, ownerUser, 'pending')
+    ).rejects.toThrow(/Cannot transition/);
+
+    expect(ordersRepository.updateOrderStatus).not.toHaveBeenCalled();
+  });
+
   test('rejects skipping a step in the sequence', async () => {
     ordersRepository.findOrderById.mockResolvedValue({
       id: 5,
@@ -487,5 +528,29 @@ describe('orders.service.listOrdersForStore', () => {
 
     expect(ordersRepository.hasStoreAccess).not.toHaveBeenCalled();
     expect(result).toEqual([{ id: 1 }]);
+  });
+
+  test('defaults to returning every order', async () => {
+    ordersRepository.findOrdersByStore.mockResolvedValue([]);
+
+    await ordersService.listOrdersForStore(10, { id: 1, role: 'admin' });
+
+    expect(ordersRepository.findOrdersByStore).toHaveBeenCalledWith(10, {
+      activeOnly: false,
+    });
+  });
+
+  test('passes activeOnly through for the kitchen display', async () => {
+    ordersRepository.findOrdersByStore.mockResolvedValue([]);
+
+    await ordersService.listOrdersForStore(
+      10,
+      { id: 1, role: 'admin' },
+      { activeOnly: true }
+    );
+
+    expect(ordersRepository.findOrdersByStore).toHaveBeenCalledWith(10, {
+      activeOnly: true,
+    });
   });
 });

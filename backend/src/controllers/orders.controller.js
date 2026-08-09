@@ -71,7 +71,9 @@ exports.updateOrderStatus = async (req, res, next) => {
 exports.getOrdersByStore = async (req, res, next) => {
   try {
     const storeId = Number(req.params.storeId);
-    const orders = await ordersService.listOrdersForStore(storeId, req.user);
+    const orders = await ordersService.listOrdersForStore(storeId, req.user, {
+      activeOnly: req.query.status === 'active',
+    });
 
     res.status(200).json({ orders });
   } catch (error) {

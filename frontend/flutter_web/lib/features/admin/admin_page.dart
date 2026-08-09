@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
@@ -1389,6 +1390,12 @@ class _AdminPageState extends State<AdminPage> {
             onPressed: _loadingStores ? null : _loadStores,
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh',
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: () => context.go('/kitchen'),
+            icon: const Icon(Icons.soup_kitchen),
+            label: const Text('Kitchen Display'),
           ),
           const SizedBox(width: 8),
           Padding(

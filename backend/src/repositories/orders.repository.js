@@ -120,14 +120,20 @@ async function updateOrderStatus(orderId, status) {
   return result.affectedRows > 0;
 }
 
-async function findOrdersByStore(storeId) {
+// activeOnly excludes completed/cancelled orders. The kitchen display
+// polls this every few seconds and only cares about live tickets - without
+// it, every poll drags the store's entire order history over the wire.
+// Oldest-first for the kitchen, since the longest-waiting ticket is the
+// most urgent; newest-first otherwise, which is what the admin list wants.
+async function findOrdersByStore(storeId, { activeOnly = false } = {}) {
   const [orders] = await db.execute(
     `
       SELECT o.*, s.name AS store_name
       FROM orders o
       LEFT JOIN stores s ON o.store_id = s.id
       WHERE o.store_id = ?
-      ORDER BY o.created_at DESC
+        ${activeOnly ? "AND o.status NOT IN ('completed', 'cancelled')" : ''}
+      ORDER BY o.created_at ${activeOnly ? 'ASC' : 'DESC'}
     `,
     [storeId]
   );
