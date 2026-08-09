@@ -7,6 +7,10 @@ const {
   buildGoogleAuthUrl,
   buildFacebookAuthUrl,
   buildLineAuthUrl,
+  verifyOAuthState,
+  exchangeGoogleCode,
+  exchangeFacebookCode,
+  exchangeLineCode,
 } = require('../services/oauth.service');
 
 const FRONTEND_URL =
@@ -118,6 +122,10 @@ function redirectToFrontend(token) {
   return `${FRONTEND_URL}/#/auth-success?token=${encodeURIComponent(token)}`;
 }
 
+function redirectToFrontendError(message) {
+  return `${FRONTEND_URL}/#/auth-error?message=${encodeURIComponent(message)}`;
+}
+
 function getProviderId(profile) {
   return (
     profile.id ||
@@ -165,21 +173,37 @@ exports.googleLogin = async (req, res) => {
 };
 
 exports.googleCallback = async (req, res) => {
-  try {
-    const profile = req.user;
+  const { code, state, error: providerError } = req.query;
 
-    if (!profile) {
-      return res.status(401).json({
-        message: 'Google user profile was not found',
-      });
+  try {
+    if (providerError) {
+      return res.redirect(
+        redirectToFrontendError('Google sign-in was cancelled.')
+      );
     }
 
+    if (!code) {
+      return res.redirect(
+        redirectToFrontendError('Google sign-in did not return a code.')
+      );
+    }
+
+    try {
+      verifyOAuthState(state, 'google');
+    } catch (stateError) {
+      console.error('Google OAuth state validation failed:', stateError);
+      return res.redirect(
+        redirectToFrontendError('Google sign-in session expired. Please try again.')
+      );
+    }
+
+    const profile = await exchangeGoogleCode(code);
     const providerId = getProviderId(profile);
 
     if (!providerId) {
-      return res.status(400).json({
-        message: 'Google profile does not contain a provider ID',
-      });
+      return res.redirect(
+        redirectToFrontendError('Google profile does not contain a provider ID.')
+      );
     }
 
     const user = await upsertUser({
@@ -194,10 +218,10 @@ exports.googleCallback = async (req, res) => {
 
     return res.redirect(redirectToFrontend(token));
   } catch (error) {
-    console.error('Google callback error:', error);
-    return res.status(500).json({
-      message: 'Google login failed',
-    });
+    console.error('Google callback error:', error.response?.data || error);
+    return res.redirect(
+      redirectToFrontendError('Google sign-in failed. Please try again.')
+    );
   }
 };
 
@@ -214,21 +238,37 @@ exports.facebookLogin = async (req, res) => {
 };
 
 exports.facebookCallback = async (req, res) => {
-  try {
-    const profile = req.user;
+  const { code, state, error: providerError } = req.query;
 
-    if (!profile) {
-      return res.status(401).json({
-        message: 'Facebook user profile was not found',
-      });
+  try {
+    if (providerError) {
+      return res.redirect(
+        redirectToFrontendError('Facebook sign-in was cancelled.')
+      );
     }
 
+    if (!code) {
+      return res.redirect(
+        redirectToFrontendError('Facebook sign-in did not return a code.')
+      );
+    }
+
+    try {
+      verifyOAuthState(state, 'facebook');
+    } catch (stateError) {
+      console.error('Facebook OAuth state validation failed:', stateError);
+      return res.redirect(
+        redirectToFrontendError('Facebook sign-in session expired. Please try again.')
+      );
+    }
+
+    const profile = await exchangeFacebookCode(code);
     const providerId = getProviderId(profile);
 
     if (!providerId) {
-      return res.status(400).json({
-        message: 'Facebook profile does not contain a provider ID',
-      });
+      return res.redirect(
+        redirectToFrontendError('Facebook profile does not contain a provider ID.')
+      );
     }
 
     const user = await upsertUser({
@@ -243,10 +283,10 @@ exports.facebookCallback = async (req, res) => {
 
     return res.redirect(redirectToFrontend(token));
   } catch (error) {
-    console.error('Facebook callback error:', error);
-    return res.status(500).json({
-      message: 'Facebook login failed',
-    });
+    console.error('Facebook callback error:', error.response?.data || error);
+    return res.redirect(
+      redirectToFrontendError('Facebook sign-in failed. Please try again.')
+    );
   }
 };
 
@@ -263,21 +303,37 @@ exports.lineLogin = async (req, res) => {
 };
 
 exports.lineCallback = async (req, res) => {
-  try {
-    const profile = req.user;
+  const { code, state, error: providerError } = req.query;
 
-    if (!profile) {
-      return res.status(401).json({
-        message: 'LINE user profile was not found',
-      });
+  try {
+    if (providerError) {
+      return res.redirect(
+        redirectToFrontendError('LINE sign-in was cancelled.')
+      );
     }
 
+    if (!code) {
+      return res.redirect(
+        redirectToFrontendError('LINE sign-in did not return a code.')
+      );
+    }
+
+    try {
+      verifyOAuthState(state, 'line');
+    } catch (stateError) {
+      console.error('LINE OAuth state validation failed:', stateError);
+      return res.redirect(
+        redirectToFrontendError('LINE sign-in session expired. Please try again.')
+      );
+    }
+
+    const profile = await exchangeLineCode(code);
     const providerId = getProviderId(profile);
 
     if (!providerId) {
-      return res.status(400).json({
-        message: 'LINE profile does not contain a provider ID',
-      });
+      return res.redirect(
+        redirectToFrontendError('LINE profile does not contain a provider ID.')
+      );
     }
 
     const user = await upsertUser({
@@ -292,10 +348,10 @@ exports.lineCallback = async (req, res) => {
 
     return res.redirect(redirectToFrontend(token));
   } catch (error) {
-    console.error('LINE callback error:', error);
-    return res.status(500).json({
-      message: 'LINE login failed',
-    });
+    console.error('LINE callback error:', error.response?.data || error);
+    return res.redirect(
+      redirectToFrontendError('LINE sign-in failed. Please try again.')
+    );
   }
 };
 

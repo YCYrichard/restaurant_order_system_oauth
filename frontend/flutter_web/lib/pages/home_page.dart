@@ -183,6 +183,15 @@ class _HomePageState extends State<HomePage> {
       if (extractedToken != null && extractedToken.isNotEmpty) {
         web.window.localStorage.setItem('auth_token', extractedToken);
       }
+    } else if (hash.startsWith('#/auth-error')) {
+      final uri = Uri.tryParse(hash.replaceFirst('#', ''));
+      final errorMessage = uri?.queryParameters['message'];
+
+      setState(() {
+        userMessage = (errorMessage != null && errorMessage.isNotEmpty)
+            ? errorMessage
+            : 'Sign-in failed. Please try again.';
+      });
     }
   }
 
@@ -332,9 +341,9 @@ class _HomePageState extends State<HomePage> {
               isLoggedIn: isLoggedIn,
               token: token,
               message: userMessage,
-              onGoogle: () => _open('http://localhost:3000/auth/google'),
-              onFacebook: () => _open('http://localhost:3000/auth/facebook'),
-              onLine: () => _open('http://localhost:3000/auth/line'),
+              onGoogle: () => _open('$apiBaseUrl/auth/google'),
+              onFacebook: () => _open('$apiBaseUrl/auth/facebook'),
+              onLine: () => _open('$apiBaseUrl/auth/line'),
               onLogout: _logout,
             ),
             StoreSelectorSection(

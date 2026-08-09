@@ -1,3 +1,31 @@
+const axios = require('axios');
+const jwt = require('jsonwebtoken');
+
+// Reuses JWT_SECRET to sign short-lived OAuth 'state' tokens. This is a
+// distinct token purpose from user session tokens (see auth.controller.js
+// signUser) - it only proves the callback round-tripped through our own
+// redirect, per the authorization-code flow CSRF requirement.
+const STATE_SECRET = process.env.JWT_SECRET || 'change_me';
+const STATE_TTL_SECONDS = 300; // 5 minutes - long enough to complete provider login
+
+function createOAuthState(provider) {
+  return jwt.sign({ provider }, STATE_SECRET, {
+    expiresIn: STATE_TTL_SECONDS,
+  });
+}
+
+function verifyOAuthState(state, provider) {
+  if (!state) {
+    throw new Error('Missing OAuth state parameter');
+  }
+
+  const decoded = jwt.verify(state, STATE_SECRET);
+
+  if (decoded.provider !== provider) {
+    throw new Error('OAuth state does not match provider');
+  }
+}
+
 function buildGoogleAuthUrl() {
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID,
@@ -5,7 +33,8 @@ function buildGoogleAuthUrl() {
     response_type: 'code',
     scope: 'openid email profile',
     access_type: 'offline',
-    prompt: 'consent'
+    prompt: 'consent',
+    state: createOAuthState('google'),
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
@@ -15,7 +44,8 @@ function buildFacebookAuthUrl() {
     client_id: process.env.FACEBOOK_CLIENT_ID,
     redirect_uri: process.env.FACEBOOK_REDIRECT_URI,
     scope: 'email,public_profile',
-    response_type: 'code'
+    response_type: 'code',
+    state: createOAuthState('facebook'),
   });
   return `https://www.facebook.com/v20.0/dialog/oauth?${params.toString()}`;
 }
@@ -25,10 +55,116 @@ function buildLineAuthUrl() {
     response_type: 'code',
     client_id: process.env.LINE_CLIENT_ID,
     redirect_uri: process.env.LINE_REDIRECT_URI,
-    state: 'restaurant_order_state',
-    scope: 'profile openid'
+    state: createOAuthState('line'),
+    scope: 'profile openid email',
   });
   return `https://access.line.me/oauth2/v2.1/authorize?${params.toString()}`;
 }
 
-module.exports = { buildGoogleAuthUrl, buildFacebookAuthUrl, buildLineAuthUrl };
+// --- Authorization-code exchange + profile fetch ---
+// Each returns a normalized { id, name, email, avatarUrl } shape so
+// auth.controller.js's getProviderId/getProfileName/etc. helpers keep working.
+
+async function exchangeGoogleCode(code) {
+  const tokenResponse = await axios.post(
+    'https://oauth2.googleapis.com/token',
+    new URLSearchParams({
+      code,
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: process.env.GOOGLE_REDIRECT_URI,
+      grant_type: 'authorization_code',
+    }),
+    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+  );
+
+  const accessToken = tokenResponse.data.access_token;
+
+  const profileResponse = await axios.get(
+    'https://www.googleapis.com/oauth2/v3/userinfo',
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
+  const profile = profileResponse.data;
+
+  return {
+    id: profile.sub,
+    name: profile.name,
+    email: profile.email,
+    avatarUrl: profile.picture,
+  };
+}
+
+async function exchangeFacebookCode(code) {
+  const tokenResponse = await axios.get(
+    'https://graph.facebook.com/v20.0/oauth/access_token',
+    {
+      params: {
+        code,
+        client_id: process.env.FACEBOOK_CLIENT_ID,
+        client_secret: process.env.FACEBOOK_CLIENT_SECRET,
+        redirect_uri: process.env.FACEBOOK_REDIRECT_URI,
+      },
+    }
+  );
+
+  const accessToken = tokenResponse.data.access_token;
+
+  const profileResponse = await axios.get('https://graph.facebook.com/me', {
+    params: {
+      fields: 'id,name,email,picture',
+      access_token: accessToken,
+    },
+  });
+
+  const profile = profileResponse.data;
+
+  return {
+    id: profile.id,
+    name: profile.name,
+    email: profile.email,
+    avatarUrl: profile.picture?.data?.url,
+  };
+}
+
+async function exchangeLineCode(code) {
+  const tokenResponse = await axios.post(
+    'https://api.line.me/oauth2/v2.1/token',
+    new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: process.env.LINE_REDIRECT_URI,
+      client_id: process.env.LINE_CLIENT_ID,
+      client_secret: process.env.LINE_CLIENT_SECRET,
+    }),
+    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+  );
+
+  const accessToken = tokenResponse.data.access_token;
+
+  const profileResponse = await axios.get('https://api.line.me/v2/profile', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  const profile = profileResponse.data;
+
+  return {
+    id: profile.userId,
+    name: profile.displayName,
+    // LINE only includes email if the channel is verified for email scope
+    // and it's read from the id_token, not this endpoint - left null here
+    // deliberately rather than guessing.
+    email: null,
+    avatarUrl: profile.pictureUrl,
+  };
+}
+
+module.exports = {
+  buildGoogleAuthUrl,
+  buildFacebookAuthUrl,
+  buildLineAuthUrl,
+  verifyOAuthState,
+  exchangeGoogleCode,
+  exchangeFacebookCode,
+  exchangeLineCode,
+};
