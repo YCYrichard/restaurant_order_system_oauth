@@ -21,6 +21,8 @@ router.post(
   controller.createProduct
 );
 
+// Access for these two is verified inside the controller (resolveProductAccess)
+// since there's no storeId in the URL for requireStoreAccess to check.
 router.put(
   '/:productId',
   requireAuth,

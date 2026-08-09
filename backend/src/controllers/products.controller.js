@@ -1,5 +1,50 @@
 const db = require('../config/db');
 
+// Update/status are addressed by productId alone (no storeId in the URL),
+// so resolve the owning store here and verify access explicitly - the
+// requireStoreAccess middleware only works when storeId is already in
+// req.params. Mirrors categories.controller.js:resolveCategoryAccess.
+async function resolveProductAccess(productId, user) {
+  const [rows] = await db.execute(
+    `
+      SELECT store_id
+      FROM products
+      WHERE id = ?
+      LIMIT 1
+    `,
+    [productId]
+  );
+
+  if (rows.length === 0) {
+    return { error: { status: 404, message: 'Product not found' } };
+  }
+
+  const storeId = rows[0].store_id;
+
+  if (user.role === 'admin') {
+    return { storeId };
+  }
+
+  const [accessRows] = await db.execute(
+    `
+      SELECT id
+      FROM owner_store_access
+      WHERE user_id = ?
+        AND store_id = ?
+      LIMIT 1
+    `,
+    [user.id, storeId]
+  );
+
+  if (accessRows.length === 0) {
+    return {
+      error: { status: 403, message: 'You do not have access to this store' },
+    };
+  }
+
+  return { storeId };
+}
+
 exports.listProductsByStore = async (req, res) => {
   try {
     const storeId = Number(req.params.storeId);
@@ -136,6 +181,15 @@ exports.updateProduct = async (req, res) => {
   try {
     const productId = Number(req.params.productId);
 
+    const access = await resolveProductAccess(productId, req.user);
+    if (access.error) {
+      return res.status(access.error.status).json({
+        message: access.error.message,
+      });
+    }
+
+    const storeId = access.storeId;
+
     const name =
       typeof req.body.name === 'string'
         ? req.body.name.trim()
@@ -163,24 +217,6 @@ exports.updateProduct = async (req, res) => {
         message: 'Product price must be a valid positive number',
       });
     }
-
-    const [productRows] = await db.execute(
-      `
-        SELECT store_id
-        FROM products
-        WHERE id = ?
-        LIMIT 1
-      `,
-      [productId]
-    );
-
-    if (productRows.length === 0) {
-      return res.status(404).json({
-        message: 'Product not found',
-      });
-    }
-
-    const storeId = productRows[0].store_id;
 
     if (categoryId !== null) {
       const [categoryRows] = await db.execute(
@@ -251,6 +287,14 @@ exports.updateProduct = async (req, res) => {
 exports.updateProductStatus = async (req, res) => {
   try {
     const productId = Number(req.params.productId);
+
+    const access = await resolveProductAccess(productId, req.user);
+    if (access.error) {
+      return res.status(access.error.status).json({
+        message: access.error.message,
+      });
+    }
+
     const isActive = Boolean(req.body.isActive);
 
     const [result] = await db.execute(

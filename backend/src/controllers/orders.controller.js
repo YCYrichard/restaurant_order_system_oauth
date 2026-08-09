@@ -89,16 +89,20 @@ exports.createOrder = async (req, res) => {
   } catch (error) {
     console.error('Create order error:', error);
     res.status(500).json({
-      message: 'Failed to create order',
-      error: error.message,
-      stack: error.stack
+      message: 'Failed to create order'
     });
   }
 };
 
 exports.getUserOrders = async (req, res) => {
   try {
-    const userId = req.params.userId;
+    const userId = Number(req.params.userId);
+
+    if (req.user.role !== 'admin' && req.user.id !== userId) {
+      return res.status(403).json({
+        message: 'You do not have access to these orders'
+      });
+    }
 
     const [orders] = await db.execute(
       `SELECT o.*, s.name AS store_name
@@ -126,8 +130,7 @@ exports.getUserOrders = async (req, res) => {
   } catch (error) {
     console.error('Get user orders error:', error);
     res.status(500).json({
-      message: 'Failed to get orders',
-      error: error.message
+      message: 'Failed to get orders'
     });
   }
 };
@@ -148,6 +151,12 @@ exports.getOrderById = async (req, res) => {
       return res.status(404).json({ message: 'Order not found' });
     }
 
+    if (req.user.role !== 'admin' && orderRows[0].user_id !== req.user.id) {
+      return res.status(403).json({
+        message: 'You do not have access to this order'
+      });
+    }
+
     const [items] = await db.execute(
       `SELECT oi.*, p.name AS product_name
        FROM order_items oi
@@ -165,8 +174,7 @@ exports.getOrderById = async (req, res) => {
   } catch (error) {
     console.error('Get order error:', error);
     res.status(500).json({
-      message: 'Failed to get order',
-      error: error.message
+      message: 'Failed to get order'
     });
   }
 };
