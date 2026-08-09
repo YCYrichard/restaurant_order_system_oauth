@@ -7,7 +7,7 @@ import '../jwt_decode.dart';
 import '../models/product.dart';
 
 class CheckoutPage extends StatefulWidget {
-  final Map<String, int> cart;
+  final Map<int, int> cart;
   final List<Product> products;
   final String? token;
   final int storeId;
@@ -79,8 +79,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final items = widget.cart.entries.map((e) {
       final product = widget.products.firstWhere((p) => p.id == e.key);
       return {
-        // IMPORTANT: use dbProductId to match MySQL products.id
-        'productId': product.dbProductId,
+        'productId': product.id,
         'quantity': e.value,
         'price': product.price,
       };
@@ -289,7 +288,7 @@ class _ContactField extends StatelessWidget {
 }
 
 class _OrderSummary extends StatelessWidget {
-  final Map<String, int> cart;
+  final Map<int, int> cart;
   final List<Product> products;
   final int itemCount;
   final double subtotal;

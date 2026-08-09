@@ -21,6 +21,12 @@ router.post(
   controller.createCategory
 );
 
+// Public, unauthenticated listing for the customer-facing menu.
+router.get(
+  '/store/:storeId/public',
+  controller.listPublicCategoriesByStore
+);
+
 // Access for these two is verified inside the controller (resolveCategoryAccess)
 // since there's no storeId in the URL for requireStoreAccess to check.
 router.put(

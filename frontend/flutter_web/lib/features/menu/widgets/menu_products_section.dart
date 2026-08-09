@@ -5,7 +5,7 @@ import '../../../models/product.dart';
 
 class MenuProductsSection extends StatelessWidget {
   final Map<String, List<Product>> groupedProducts;
-  final Map<String, int> cart;
+  final Map<int, int> cart;
   final void Function(Product product) onAddToCart;
 
   const MenuProductsSection({
@@ -43,7 +43,7 @@ class MenuProductsSection extends StatelessWidget {
 class _CategoryProductGroup extends StatelessWidget {
   final String category;
   final List<Product> products;
-  final Map<String, int> cart;
+  final Map<int, int> cart;
   final void Function(Product product) onAddToCart;
 
   const _CategoryProductGroup({
@@ -113,6 +113,7 @@ class _CategoryProductGroup extends StatelessWidget {
                 return _ProductCard(
                   product: product,
                   qtyInCart: qty,
+                  icon: _categoryIcon(category),
                   onAddToCart: onAddToCart,
                 );
               },
@@ -127,11 +128,13 @@ class _CategoryProductGroup extends StatelessWidget {
 class _ProductCard extends StatelessWidget {
   final Product product;
   final int qtyInCart;
+  final IconData icon;
   final void Function(Product product) onAddToCart;
 
   const _ProductCard({
     required this.product,
     required this.qtyInCart,
+    required this.icon,
     required this.onAddToCart,
   });
 
@@ -148,7 +151,7 @@ class _ProductCard extends StatelessWidget {
             CircleAvatar(
               radius: 30,
               backgroundColor: Colors.deepOrange.withValues(alpha: 0.10),
-              child: Icon(product.icon, color: Colors.deepOrange, size: 30),
+              child: Icon(icon, color: Colors.deepOrange, size: 30),
             ),
             const SizedBox(width: 18),
             Expanded(
@@ -163,14 +166,17 @@ class _ProductCard extends StatelessWidget {
                       fontSize: 18,
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    product.description,
-                    style: const TextStyle(
-                      color: Color(0xFF625D5A),
-                      height: 1.4,
+                  if (product.description != null &&
+                      product.description!.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      product.description!,
+                      style: const TextStyle(
+                        color: Color(0xFF625D5A),
+                        height: 1.4,
+                      ),
                     ),
-                  ),
+                  ],
                   const SizedBox(height: 10),
                   Row(
                     children: [
@@ -209,7 +215,7 @@ class _ProductCard extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             FilledButton.icon(
-              onPressed: product.isActive ? () => onAddToCart(product) : null,
+              onPressed: () => onAddToCart(product),
               icon: const Icon(Icons.add_shopping_cart),
               label: const Text('Add'),
             ),

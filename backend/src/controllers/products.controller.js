@@ -83,6 +83,44 @@ exports.listProductsByStore = async (req, res) => {
   }
 };
 
+// Public listing used by the customer-facing menu. Deliberately
+// unauthenticated and limited to active products only.
+exports.listPublicProductsByStore = async (req, res) => {
+  try {
+    const storeId = Number(req.params.storeId);
+
+    const [rows] = await db.execute(
+      `
+        SELECT
+          p.id,
+          p.store_id,
+          p.category_id,
+          p.name,
+          p.description,
+          p.price,
+          c.name AS category_name
+        FROM products p
+        LEFT JOIN categories c
+          ON c.id = p.category_id
+        WHERE p.store_id = ?
+          AND p.is_active = TRUE
+        ORDER BY c.sort_order ASC, p.name ASC
+      `,
+      [storeId]
+    );
+
+    return res.status(200).json({
+      products: rows,
+    });
+  } catch (error) {
+    console.error('List public products error:', error);
+
+    return res.status(500).json({
+      message: 'Failed to list products',
+    });
+  }
+};
+
 exports.createProduct = async (req, res) => {
   try {
     const storeId = Number(req.params.storeId);

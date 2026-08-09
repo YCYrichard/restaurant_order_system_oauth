@@ -71,6 +71,34 @@ exports.listCategoriesByStore = async (req, res) => {
   }
 };
 
+// Public listing used by the customer-facing menu, so it can group
+// products by real category instead of a hardcoded string.
+exports.listPublicCategoriesByStore = async (req, res) => {
+  try {
+    const storeId = Number(req.params.storeId);
+
+    const [rows] = await db.execute(
+      `
+        SELECT id, store_id, name, sort_order
+        FROM categories
+        WHERE store_id = ?
+        ORDER BY sort_order ASC, name ASC
+      `,
+      [storeId]
+    );
+
+    return res.status(200).json({
+      categories: rows,
+    });
+  } catch (error) {
+    console.error('List public categories error:', error);
+
+    return res.status(500).json({
+      message: 'Failed to list categories',
+    });
+  }
+};
+
 exports.createCategory = async (req, res) => {
   try {
     const storeId = Number(req.params.storeId);

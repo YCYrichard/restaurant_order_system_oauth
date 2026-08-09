@@ -1,23 +1,33 @@
-import 'package:flutter/material.dart';
-
 class Product {
-  final String id;
-  final int dbProductId;
+  final int id;
+  final int storeId;
+  final int? categoryId;
+  final String? categoryName;
   final String name;
-  final String category;
+  final String? description;
   final double price;
-  final String description;
-  final IconData icon;
-  final bool isActive;
 
   const Product({
     required this.id,
-    required this.dbProductId,
+    required this.storeId,
+    this.categoryId,
+    this.categoryName,
     required this.name,
-    required this.category,
+    this.description,
     required this.price,
-    required this.description,
-    required this.icon,
-    this.isActive = true,
   });
+
+  factory Product.fromJson(Map<String, dynamic> json) {
+    return Product(
+      id: int.parse(json['id'].toString()),
+      storeId: int.parse(json['store_id'].toString()),
+      categoryId: json['category_id'] == null
+          ? null
+          : int.parse(json['category_id'].toString()),
+      categoryName: json['category_name']?.toString(),
+      name: json['name']?.toString() ?? '',
+      description: json['description']?.toString(),
+      price: double.tryParse(json['price'].toString()) ?? 0,
+    );
+  }
 }

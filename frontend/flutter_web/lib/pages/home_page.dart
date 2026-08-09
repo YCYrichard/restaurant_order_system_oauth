@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:web/web.dart' as web;
 
+import '../core/api/api_client.dart';
 import '../core/constants/app_config.dart';
 import '../features/auth/widgets/social_login_section.dart';
 import '../features/cart/widgets/cart_summary_section.dart';
+import '../features/menu/data/menu_repository.dart';
 import '../features/menu/widgets/menu_products_section.dart';
 import '../features/store/widgets/store_selector_section.dart';
 import '../models/product.dart';
@@ -30,82 +32,11 @@ class _HomePageState extends State<HomePage> {
   int? selectedStoreId;
   bool _loadingStores = false;
 
-  final List<Product> products = const [
-    Product(
-      id: 'burger_1',
-      dbProductId: 1,
-      name: 'Classic Beef Burger',
-      category: 'Burgers',
-      price: 8.90,
-      description: 'Juicy beef patty, lettuce, tomato, and house sauce.',
-      icon: Icons.lunch_dining,
-    ),
-    Product(
-      id: 'burger_2',
-      dbProductId: 2,
-      name: 'Spicy Chicken Burger',
-      category: 'Burgers',
-      price: 9.50,
-      description: 'Crispy chicken with spicy mayo and pickles.',
-      icon: Icons.local_fire_department,
-    ),
-    Product(
-      id: 'drink_1',
-      dbProductId: 3,
-      name: 'Fresh Lemon Tea',
-      category: 'Drinks',
-      price: 2.80,
-      description: 'Cold brewed tea with fresh lemon slices.',
-      icon: Icons.local_drink,
-    ),
-    Product(
-      id: 'drink_2',
-      dbProductId: 4,
-      name: 'Iced Americano',
-      category: 'Drinks',
-      price: 3.20,
-      description: 'Smooth coffee served chilled with ice.',
-      icon: Icons.coffee,
-    ),
-    Product(
-      id: 'side_1',
-      dbProductId: 5,
-      name: 'Crispy Fries',
-      category: 'Sides',
-      price: 3.60,
-      description: 'Golden fries with light seasoning.',
-      icon: Icons.fastfood,
-    ),
-    Product(
-      id: 'side_2',
-      dbProductId: 6,
-      name: 'Chicken Nuggets',
-      category: 'Sides',
-      price: 4.40,
-      description: 'Six crispy nuggets with dipping sauce.',
-      icon: Icons.set_meal,
-    ),
-    Product(
-      id: 'dessert_1',
-      dbProductId: 7,
-      name: 'Vanilla Sundae',
-      category: 'Desserts',
-      price: 3.90,
-      description: 'Creamy vanilla ice cream with sweet topping.',
-      icon: Icons.icecream,
-    ),
-    Product(
-      id: 'dessert_2',
-      dbProductId: 8,
-      name: 'Chocolate Lava Cake',
-      category: 'Desserts',
-      price: 5.20,
-      description: 'Warm chocolate cake with soft molten center.',
-      icon: Icons.cake_outlined,
-    ),
-  ];
+  List<Product> products = [];
+  bool _loadingMenu = false;
+  String? _menuError;
 
-  final Map<String, int> cart = {};
+  final Map<int, int> cart = {};
 
   @override
   void initState() {
@@ -142,15 +73,23 @@ class _HomePageState extends State<HomePage> {
             )
           : <Map<String, dynamic>>[];
 
+      var newlySelectedStoreId = selectedStoreId;
+
       setState(() {
         stores = loadedStores;
 
         if (selectedStoreId == null && loadedStores.isNotEmpty) {
-          selectedStoreId = int.tryParse(loadedStores.first['id'].toString());
+          newlySelectedStoreId =
+              int.tryParse(loadedStores.first['id'].toString());
+          selectedStoreId = newlySelectedStoreId;
         }
 
         _loadingStores = false;
       });
+
+      if (newlySelectedStoreId != null) {
+        _loadMenu(newlySelectedStoreId!);
+      }
     } catch (_) {
       if (mounted) {
         setState(() {
@@ -160,10 +99,48 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _loadMenu(int storeId) async {
+    setState(() {
+      _loadingMenu = true;
+      _menuError = null;
+    });
+
+    try {
+      final loadedProducts = await MenuRepository.fetchProducts(storeId);
+
+      if (!mounted) return;
+
+      setState(() {
+        products = loadedProducts;
+        _loadingMenu = false;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _menuError = error.message;
+        _loadingMenu = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _menuError = 'Unable to load the menu. Please try again.';
+        _loadingMenu = false;
+      });
+    }
+  }
+
   void _selectStore(int storeId) {
+    if (storeId == selectedStoreId) return;
+
     setState(() {
       selectedStoreId = storeId;
+      // Cart items reference product ids scoped to the previous store.
+      cart.clear();
     });
+
+    _loadMenu(storeId);
   }
 
   void _readAuthFromUrl() {
@@ -225,13 +202,13 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void increaseQty(String productId) {
+  void increaseQty(int productId) {
     setState(() {
       cart.update(productId, (value) => value + 1);
     });
   }
 
-  void decreaseQty(String productId) {
+  void decreaseQty(int productId) {
     setState(() {
       if (!cart.containsKey(productId)) return;
       final current = cart[productId]!;
@@ -250,7 +227,7 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  Product getProductById(String productId) {
+  Product getProductById(int productId) {
     return products.firstWhere((p) => p.id == productId);
   }
 
@@ -270,8 +247,9 @@ class _HomePageState extends State<HomePage> {
   Map<String, List<Product>> get groupedProducts {
     final Map<String, List<Product>> grouped = {};
     for (final product in products) {
-      grouped.putIfAbsent(product.category, () => []);
-      grouped[product.category]!.add(product);
+      final category = product.categoryName ?? 'Other';
+      grouped.putIfAbsent(category, () => []);
+      grouped[category]!.add(product);
     }
     return grouped;
   }
@@ -300,7 +278,7 @@ class _HomePageState extends State<HomePage> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => CheckoutPage(
-          cart: Map<String, int>.from(cart),
+          cart: Map<int, int>.from(cart),
           products: products,
           token: token,
           storeId: selectedStoreId!,
@@ -352,11 +330,30 @@ class _HomePageState extends State<HomePage> {
               isLoading: _loadingStores,
               onSelectStore: _selectStore,
             ),
-            MenuProductsSection(
-              groupedProducts: groupedProducts,
-              cart: cart,
-              onAddToCart: addToCart,
-            ),
+            if (_loadingMenu)
+              const Padding(
+                padding: EdgeInsets.all(32),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_menuError != null)
+              Padding(
+                padding: const EdgeInsets.all(32),
+                child: Text(
+                  _menuError!,
+                  style: const TextStyle(color: Colors.redAccent),
+                ),
+              )
+            else if (products.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(32),
+                child: Text('No menu items available for this store yet.'),
+              )
+            else
+              MenuProductsSection(
+                groupedProducts: groupedProducts,
+                cart: cart,
+                onAddToCart: addToCart,
+              ),
             CartSummarySection(
               cart: cart,
               getProductById: getProductById,

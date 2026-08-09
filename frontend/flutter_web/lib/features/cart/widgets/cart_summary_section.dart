@@ -5,12 +5,12 @@ import '../../../core/widgets/stat_chip.dart';
 import '../../../models/product.dart';
 
 class CartSummarySection extends StatelessWidget {
-  final Map<String, int> cart;
-  final Product Function(String productId) getProductById;
+  final Map<int, int> cart;
+  final Product Function(int productId) getProductById;
   final int cartItemCount;
   final double cartSubtotal;
-  final void Function(String productId) onIncreaseQty;
-  final void Function(String productId) onDecreaseQty;
+  final void Function(int productId) onIncreaseQty;
+  final void Function(int productId) onDecreaseQty;
   final VoidCallback onClearCart;
   final VoidCallback onCheckoutTap;
 
@@ -98,8 +98,8 @@ class CartSummarySection extends StatelessWidget {
                             CircleAvatar(
                               backgroundColor:
                                   Colors.deepOrange.withValues(alpha: 0.10),
-                              child: Icon(
-                                product.icon,
+                              child: const Icon(
+                                Icons.restaurant_menu,
                                 color: Colors.deepOrange,
                               ),
                             ),
