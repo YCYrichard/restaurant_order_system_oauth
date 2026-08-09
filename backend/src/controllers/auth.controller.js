@@ -391,13 +391,17 @@ exports.adminLogin = async (req, res) => {
       });
     }
 
+    // Any staff role may sign in here, not just admins - a kitchen needs
+    // its own credentials rather than borrowing the owner's. What each role
+    // can then do is still decided downstream by requireAdmin /
+    // requireStoreAccess; this only establishes who they are.
     const [rows] = await db.execute(
       `
         SELECT *
         FROM users
         WHERE provider = 'local'
           AND provider_id = ?
-          AND role = 'admin'
+          AND role IN ('admin', 'owner', 'staff')
         LIMIT 1
       `,
       [username]
@@ -405,7 +409,7 @@ exports.adminLogin = async (req, res) => {
 
     if (rows.length === 0) {
       return res.status(401).json({
-        message: 'Invalid admin credentials',
+        message: 'Invalid credentials',
       });
     }
 
@@ -413,7 +417,7 @@ exports.adminLogin = async (req, res) => {
 
     if (!user.password_hash) {
       return res.status(500).json({
-        message: 'This admin account does not have a password configured',
+        message: 'This account does not have a password configured',
       });
     }
 
@@ -424,14 +428,14 @@ exports.adminLogin = async (req, res) => {
 
     if (!passwordMatches) {
       return res.status(401).json({
-        message: 'Invalid admin credentials',
+        message: 'Invalid credentials',
       });
     }
 
     const token = await issueSession(res, user, req);
 
     return res.status(200).json({
-      message: 'Admin login successful',
+      message: 'Signed in successfully',
       token,
       user: {
         id: user.id,

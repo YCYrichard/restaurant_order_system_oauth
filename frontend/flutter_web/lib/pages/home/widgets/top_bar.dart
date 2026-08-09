@@ -112,7 +112,7 @@ class TopBar extends StatelessWidget {
               : OutlinedButton.icon(
                   onPressed: () => context.go('/admin/login'),
                   icon: const Icon(Icons.admin_panel_settings),
-                  label: const Text('Admin Login'),
+                  label: const Text('Staff Login'),
                 ),
         ),
       ],

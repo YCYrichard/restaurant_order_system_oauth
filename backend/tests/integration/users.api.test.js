@@ -71,6 +71,109 @@ describe('GET /api/v1/users', () => {
   });
 });
 
+describe('POST /api/v1/users', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('rejects non-admin users', async () => {
+    const res = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        name: 'Kitchen',
+        username: 'kitchen1',
+        password: 'longenough1',
+        role: 'staff',
+      });
+
+    expect(res.status).toBe(403);
+    expect(db.execute).not.toHaveBeenCalled();
+  });
+
+  test('refuses to create an admin through this endpoint', async () => {
+    const res = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Sneaky',
+        username: 'sneaky',
+        password: 'longenough1',
+        role: 'admin',
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('USER_VALIDATION_ERROR');
+    expect(db.execute).not.toHaveBeenCalled();
+  });
+
+  test('rejects a short password before hashing anything', async () => {
+    const res = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Kitchen',
+        username: 'kitchen1',
+        password: 'short',
+        role: 'staff',
+      });
+
+    expect(res.status).toBe(400);
+    expect(db.execute).not.toHaveBeenCalled();
+  });
+
+  test('rejects a duplicate username', async () => {
+    db.execute.mockResolvedValueOnce([[{ id: 9 }]]); // findLocalUserByUsername
+
+    const res = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Kitchen',
+        username: 'kitchen1',
+        password: 'longenough1',
+        role: 'staff',
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/already taken/);
+  });
+
+  test('creates a staff account and never returns the password hash', async () => {
+    db.execute
+      .mockResolvedValueOnce([[]]) // findLocalUserByUsername -> free
+      .mockResolvedValueOnce([{ insertId: 12 }]) // insertLocalUser
+      .mockResolvedValueOnce([
+        [
+          {
+            id: 12,
+            name: 'Kitchen',
+            email: null,
+            provider: 'local',
+            role: 'staff',
+          },
+        ],
+      ]);
+
+    const res = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Kitchen',
+        username: 'kitchen1',
+        password: 'longenough1',
+        role: 'staff',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.user).toMatchObject({ id: 12, role: 'staff' });
+    expect(JSON.stringify(res.body)).not.toContain('password');
+
+    // The stored value must be a bcrypt hash, never the plaintext.
+    const insertParams = db.execute.mock.calls[1][1];
+    expect(insertParams).not.toContain('longenough1');
+    expect(insertParams[3]).toMatch(/^\$2[aby]\$/);
+  });
+});
+
 describe('GET /api/v1/users/:userId/store-access', () => {
   beforeEach(() => jest.clearAllMocks());
 

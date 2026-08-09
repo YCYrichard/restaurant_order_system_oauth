@@ -10,6 +10,16 @@ exports.listUsers = async (req, res, next) => {
   }
 };
 
+exports.createStaffUser = async (req, res, next) => {
+  try {
+    const user = await usersService.createStaffUser(req.body);
+
+    res.status(201).json({ user });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.getStoreAccessForUser = async (req, res, next) => {
   try {
     const userId = Number(req.params.userId);

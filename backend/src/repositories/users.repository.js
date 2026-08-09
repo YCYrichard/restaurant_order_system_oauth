@@ -37,6 +37,33 @@ async function findUserById(userId) {
   return rows[0] || null;
 }
 
+async function findLocalUserByUsername(username) {
+  const [rows] = await db.execute(
+    `
+      SELECT id, name, email, provider, role, created_at
+      FROM users
+      WHERE provider = 'local'
+        AND provider_id = ?
+      LIMIT 1
+    `,
+    [username]
+  );
+
+  return rows[0] || null;
+}
+
+async function insertLocalUser({ name, username, role, passwordHash }) {
+  const [result] = await db.execute(
+    `
+      INSERT INTO users (name, provider, provider_id, role, password_hash)
+      VALUES (?, 'local', ?, ?, ?)
+    `,
+    [name, username, role, passwordHash]
+  );
+
+  return result.insertId;
+}
+
 async function findStoreAccessForUser(userId) {
   const [rows] = await db.execute(
     `
@@ -81,6 +108,8 @@ module.exports = {
   findUsers,
   countUsers,
   findUserById,
+  findLocalUserByUsername,
+  insertLocalUser,
   findStoreAccessForUser,
   grantStoreAccess,
   revokeStoreAccess,

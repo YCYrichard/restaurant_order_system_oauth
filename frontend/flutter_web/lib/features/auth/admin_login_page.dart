@@ -105,23 +105,22 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
 
       final payload = JwtPayload.fromToken(token);
 
-      if (payload.role != 'admin') {
-        _showMessage(
-          'This account does not have administrator access.',
-          isError: true,
-        );
-        return;
-      }
-
+      // Staff and owners sign in here too, not just admins - a kitchen has
+      // its own credentials. The backend only issues tokens for staff
+      // roles, so anything that gets here is already authorized to be.
       auth.setSession(token);
 
       if (!mounted) {
         return;
       }
 
-      // The router's redirect logic sends an authenticated admin from '/'
-      // to '/admin' automatically once AuthController notifies listeners.
-      context.go('/');
+      // Admins land on the dashboard (the router redirects '/' there for
+      // them); everyone else goes straight to the screen they're for.
+      if (payload.role == 'admin') {
+        context.go('/');
+      } else {
+        context.go('/kitchen');
+      }
     } catch (error) {
       _showMessage(
         'Unable to connect to the backend. Make sure the API is running at $apiBaseUrl.',
@@ -173,7 +172,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
           icon: const Icon(Icons.arrow_back),
           tooltip: 'Back',
         ),
-        title: const Text('Admin Login'),
+        title: const Text('Staff Login'),
       ),
       body: SafeArea(
         child: Center(
@@ -210,7 +209,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                         ),
                         const SizedBox(height: 20),
                         const Text(
-                          'Restaurant Admin',
+                          'Restaurant Staff',
                           style: TextStyle(
                             fontSize: 28,
                             fontWeight: FontWeight.w800,
@@ -218,7 +217,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                         ),
                         const SizedBox(height: 8),
                         const Text(
-                          'Sign in to manage stores, products, categories, and restaurant settings.',
+                          'Sign in to manage the restaurant, or to open the kitchen display.',
                           style: TextStyle(
                             color: Color(0xFF625D5A),
                             height: 1.5,
@@ -330,15 +329,13 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                                   )
                                 : const Icon(Icons.login),
                             label: Text(
-                              _isSubmitting
-                                  ? 'Signing in...'
-                                  : 'Sign in as Admin',
+                              _isSubmitting ? 'Signing in...' : 'Sign in',
                             ),
                           ),
                         ),
                         const SizedBox(height: 18),
                         const Text(
-                          'Your account must have role = admin in the users table.',
+                          'Staff and owner accounts open the kitchen display; admins get the full dashboard.',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: Color(0xFF77716D),

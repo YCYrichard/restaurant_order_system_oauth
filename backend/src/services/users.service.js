@@ -1,9 +1,18 @@
+const bcrypt = require('bcryptjs');
+
 const usersRepository = require('../repositories/users.repository');
 const storesRepository = require('../repositories/stores.repository');
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 const VALID_ACCESS_ROLES = ['owner', 'manager', 'staff'];
+
+// Roles that can sign in with a username and password. 'customer' is
+// excluded on purpose - customers arrive through OAuth, not the staff
+// login, and creating password-holding customer rows here would blur that.
+const VALID_STAFF_ROLES = ['owner', 'staff'];
+const MIN_PASSWORD_LENGTH = 8;
+const BCRYPT_ROUNDS = 10;
 
 class UserValidationError extends Error {
   constructor(message) {
@@ -54,6 +63,54 @@ async function listUsers({ page, pageSize } = {}) {
     pageSize: pagination.pageSize,
     total,
   };
+}
+
+/// Creates a local (username + password) staff account. Admins are
+/// deliberately not creatable here - promoting someone to admin should be a
+/// conscious database-level act, not a click in a panel that any admin
+/// session can reach.
+async function createStaffUser({ name, username, password, role }) {
+  const trimmedUsername =
+    typeof username === 'string' ? username.trim() : '';
+  const trimmedName = typeof name === 'string' ? name.trim() : '';
+
+  if (!trimmedUsername) {
+    throw new UserValidationError('A username is required');
+  }
+
+  if (!trimmedName) {
+    throw new UserValidationError('A name is required');
+  }
+
+  if (!VALID_STAFF_ROLES.includes(role)) {
+    throw new UserValidationError(
+      `role must be one of: ${VALID_STAFF_ROLES.join(', ')}`
+    );
+  }
+
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+    throw new UserValidationError(
+      `Password must be at least ${MIN_PASSWORD_LENGTH} characters`
+    );
+  }
+
+  const existing =
+    await usersRepository.findLocalUserByUsername(trimmedUsername);
+
+  if (existing) {
+    throw new UserValidationError('That username is already taken');
+  }
+
+  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+  const userId = await usersRepository.insertLocalUser({
+    name: trimmedName,
+    username: trimmedUsername,
+    role,
+    passwordHash,
+  });
+
+  return usersRepository.findUserById(userId);
 }
 
 async function requireUser(userId) {
@@ -112,6 +169,7 @@ module.exports = {
   UserNotFoundError,
   StoreAccessNotFoundError,
   listUsers,
+  createStaffUser,
   getStoreAccessForUser,
   grantStoreAccess,
   revokeStoreAccess,

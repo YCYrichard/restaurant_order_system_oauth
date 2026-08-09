@@ -74,6 +74,135 @@ class _UsersPanelState extends State<UsersPanel> {
     }
   }
 
+  /// Creates a username/password account for a kitchen or store owner.
+  /// Admin accounts aren't creatable here on purpose - the backend rejects
+  /// role 'admin' on this endpoint.
+  Future<void> _showCreateStaffDialog() async {
+    final nameController = TextEditingController();
+    final usernameController = TextEditingController();
+    final passwordController = TextEditingController();
+    var role = 'staff';
+
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Create Staff Account'),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Display name (e.g. Kitchen)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: usernameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Username',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: passwordController,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Password (min 8 characters)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: role,
+                      decoration: const InputDecoration(
+                        labelText: 'Role',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'staff',
+                          child: Text('Staff (kitchen display)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'owner',
+                          child: Text('Owner (their own stores)'),
+                        ),
+                      ],
+                      onChanged: (value) =>
+                          setDialogState(() => role = value ?? 'staff'),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'After creating the account, grant it access to a '
+                      'store below - without a grant it can sign in but '
+                      'will see nothing.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF77716D),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    final response = await _auth.authorizedRequest(
+                      'POST',
+                      '/api/v1/users',
+                      body: {
+                        'name': nameController.text.trim(),
+                        'username': usernameController.text.trim(),
+                        'password': passwordController.text,
+                        'role': role,
+                      },
+                    );
+
+                    if (!dialogContext.mounted) return;
+
+                    if (response.statusCode != 201) {
+                      final decoded = jsonDecode(response.body);
+                      final message =
+                          decoded is Map && decoded['message'] != null
+                              ? decoded['message'].toString()
+                              : 'Failed to create the account.';
+
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(
+                        SnackBar(content: Text(message)),
+                      );
+                      return;
+                    }
+
+                    Navigator.of(dialogContext).pop(true);
+                  },
+                  child: const Text('Create'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (created == true) {
+      await _loadUsers();
+      _showMessage('Staff account created. Now grant it store access.');
+    }
+  }
+
   Future<void> _showManageAccessDialog(Map<String, dynamic> user) async {
     final userId = int.tryParse(user['id'].toString());
     if (userId == null) return;
@@ -112,6 +241,11 @@ class _UsersPanelState extends State<UsersPanel> {
                   onPressed: _loading ? null : _loadUsers,
                   icon: const Icon(Icons.refresh),
                   tooltip: 'Refresh users',
+                ),
+                IconButton(
+                  onPressed: _showCreateStaffDialog,
+                  icon: const Icon(Icons.person_add_alt),
+                  tooltip: 'Create staff account',
                 ),
               ],
             ),

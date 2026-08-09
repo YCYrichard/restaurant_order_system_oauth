@@ -9,6 +9,7 @@ const { requireAuth, requireAdmin } = require('../middleware/auth.middleware');
 router.use(requireAuth, requireAdmin);
 
 router.get('/', controller.listUsers);
+router.post('/', controller.createStaffUser);
 router.get('/:userId/store-access', controller.getStoreAccessForUser);
 router.post('/:userId/store-access', controller.grantStoreAccess);
 router.delete('/:userId/store-access/:storeId', controller.revokeStoreAccess);
