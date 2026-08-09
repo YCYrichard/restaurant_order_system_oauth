@@ -2,6 +2,7 @@ const db = require('../config/db');
 const ordersRepository = require('../repositories/orders.repository');
 const couponsRepository = require('../repositories/coupons.repository');
 const couponsService = require('./coupons.service');
+const eventsService = require('./events.service');
 
 const TOTAL_TOLERANCE = 0.01;
 
@@ -253,7 +254,18 @@ async function createOrder(input) {
     connection.release();
   }
 
-  return ordersRepository.findOrderWithItems(orderId);
+  const order = await ordersRepository.findOrderWithItems(orderId);
+
+  // Published after commit, never inside the transaction - a kitchen must
+  // not be told about an order that then rolls back.
+  eventsService.publishOrderEvent({
+    type: 'order.created',
+    storeId: Number(storeId),
+    userId: userId ?? null,
+    order,
+  });
+
+  return order;
 }
 
 async function getOrdersForUser(userId) {
@@ -306,7 +318,19 @@ async function updateOrderStatus(orderId, user, status) {
 
   await ordersRepository.updateOrderStatus(orderId, status);
 
-  return ordersRepository.findOrderWithItems(orderId);
+  const updated = await ordersRepository.findOrderWithItems(orderId);
+
+  // Reaches the store's other kitchen screens (so two stations don't fight
+  // over the same ticket) and the customer, who sees "ready" without
+  // refreshing.
+  eventsService.publishOrderEvent({
+    type: 'order.status_changed',
+    storeId: Number(order.store_id),
+    userId: order.user_id ?? null,
+    order: updated,
+  });
+
+  return updated;
 }
 
 async function listOrdersForStore(storeId, user, { activeOnly = false } = {}) {

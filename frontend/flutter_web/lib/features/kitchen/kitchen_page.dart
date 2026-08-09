@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:web/web.dart' as web;
 
 import '../../core/auth/auth_controller.dart';
+import '../../core/events/event_stream_client.dart';
 
 /// Dedicated kitchen display. Deliberately a separate page rather than
 /// another panel in the admin dashboard: a kitchen screen is mounted, always
@@ -36,7 +37,11 @@ class _KitchenPageState extends State<KitchenPage> {
   static const _amberAfter = Duration(minutes: 5);
   static const _redAfter = Duration(minutes: 8);
 
+  /// Polling is the fallback, not the primary path - when the event stream
+  /// is connected this backstop runs slowly, and only tightens up if the
+  /// stream drops.
   static const _pollEvery = Duration(seconds: 8);
+  static const _pollEveryWhenStreaming = Duration(seconds: 60);
 
   List<Map<String, dynamic>> _stores = [];
   int? _selectedStoreId;
@@ -55,18 +60,25 @@ class _KitchenPageState extends State<KitchenPage> {
   Timer? _ticker;
   int _tickCount = 0;
 
+  EventStreamClient? _events;
+  StreamStatus _streamStatus = StreamStatus.connecting;
+
   @override
   void initState() {
     super.initState();
     _loadStores();
 
     // A single 1s ticker drives both the elapsed-time labels (which need to
-    // update every second to read like a kitchen timer) and the poll, which
-    // only fires every _pollEvery.
+    // update every second to read like a kitchen timer) and the fallback
+    // poll.
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       _tickCount++;
 
-      if (_tickCount % _pollEvery.inSeconds == 0 && _selectedStoreId != null) {
+      final interval = _streamStatus == StreamStatus.connected
+          ? _pollEveryWhenStreaming
+          : _pollEvery;
+
+      if (_tickCount % interval.inSeconds == 0 && _selectedStoreId != null) {
         _loadOrders(silent: true);
       } else if (mounted) {
         setState(() {}); // refresh elapsed timers / aging colors
@@ -77,7 +89,32 @@ class _KitchenPageState extends State<KitchenPage> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _events?.dispose();
     super.dispose();
+  }
+
+  void _subscribeToStoreEvents(int storeId) {
+    _events?.dispose();
+
+    _events = EventStreamClient(
+      auth: _auth,
+      path: '/events/store/$storeId',
+      onStatusChanged: (status) {
+        if (!mounted) return;
+        setState(() => _streamStatus = status);
+      },
+      onEvent: (event) {
+        if (!mounted) return;
+
+        // Refetch rather than merging the pushed order into local state:
+        // the event says *something changed*, and a refetch keeps one
+        // source of truth instead of two paths that can disagree. At
+        // kitchen volumes the extra request is free.
+        _loadOrders(silent: true);
+
+        if (event.type == 'order.created') _playAlert();
+      },
+    )..start();
   }
 
   AuthController get _auth => context.read<AuthController>();
@@ -115,6 +152,7 @@ class _KitchenPageState extends State<KitchenPage> {
 
       if (_selectedStoreId != null) {
         await _loadOrders();
+        _subscribeToStoreEvents(_selectedStoreId!);
       }
     } catch (error) {
       if (!mounted) return;
@@ -384,6 +422,7 @@ class _KitchenPageState extends State<KitchenPage> {
                   _knownOrderIds = {};
                 });
                 _loadOrders();
+                _subscribeToStoreEvents(value);
               },
             )
           else if (_stores.length == 1)
@@ -392,6 +431,39 @@ class _KitchenPageState extends State<KitchenPage> {
               style: const TextStyle(color: Colors.white70),
             ),
           const Spacer(),
+          // A stream that has silently died looks exactly like a quiet
+          // kitchen, so surface the connection state rather than leaving
+          // staff to wonder why nothing is arriving.
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: switch (_streamStatus) {
+                StreamStatus.connected => Colors.green.withValues(alpha: 0.15),
+                StreamStatus.connecting =>
+                  Colors.orange.withValues(alpha: 0.15),
+                StreamStatus.disconnected => Colors.red.withValues(alpha: 0.15),
+              },
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              switch (_streamStatus) {
+                StreamStatus.connected => 'LIVE',
+                StreamStatus.connecting => 'CONNECTING',
+                StreamStatus.disconnected => 'POLLING',
+              },
+              style: TextStyle(
+                color: switch (_streamStatus) {
+                  StreamStatus.connected => Colors.greenAccent,
+                  StreamStatus.connecting => Colors.orangeAccent,
+                  StreamStatus.disconnected => Colors.redAccent,
+                },
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
           Text(
             _lastUpdated == null
                 ? 'never updated'

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../core/auth/auth_controller.dart';
+import '../core/events/event_stream_client.dart';
 
 /// Customer-facing order history. Surfaces GET /orders/user/:userId, which
 /// has existed and been auth-protected for a while but was never called by
@@ -21,10 +22,28 @@ class _MyOrdersPageState extends State<MyOrdersPage> {
   bool _loading = true;
   String? _error;
 
+  EventStreamClient? _events;
+
   @override
   void initState() {
     super.initState();
     _loadOrders();
+
+    // Live status: the kitchen bumping a ticket reaches the customer here
+    // without them refreshing.
+    _events = EventStreamClient(
+      auth: context.read<AuthController>(),
+      path: '/events/my-orders',
+      onEvent: (_) {
+        if (mounted) _loadOrders();
+      },
+    )..start();
+  }
+
+  @override
+  void dispose() {
+    _events?.dispose();
+    super.dispose();
   }
 
   Future<void> _loadOrders() async {

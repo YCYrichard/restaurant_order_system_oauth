@@ -4,6 +4,7 @@ jest.mock('../../src/config/db', () => ({
 }));
 jest.mock('../../src/repositories/orders.repository');
 jest.mock('../../src/repositories/coupons.repository');
+jest.mock('../../src/services/events.service');
 jest.mock('../../src/services/coupons.service', () => {
   const actual = jest.requireActual('../../src/services/coupons.service');
   return { ...actual, resolveDiscount: jest.fn() };
@@ -13,6 +14,7 @@ const db = require('../../src/config/db');
 const ordersRepository = require('../../src/repositories/orders.repository');
 const couponsRepository = require('../../src/repositories/coupons.repository');
 const couponsService = require('../../src/services/coupons.service');
+const eventsService = require('../../src/services/events.service');
 const ordersService = require('../../src/services/orders.service');
 
 const validInput = {
@@ -240,6 +242,28 @@ describe('orders.service.createOrder coupon handling', () => {
     couponsRepository.insertRedemption.mockResolvedValue(undefined);
   });
 
+  test('publishes order.created only after the transaction commits', async () => {
+    await ordersService.createOrder({ ...validInput, userId: 3 });
+
+    expect(mockConnection.commit).toHaveBeenCalled();
+    expect(eventsService.publishOrderEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'order.created',
+        storeId: 1,
+        userId: 3,
+      })
+    );
+  });
+
+  test('publishes nothing when the order rolls back', async () => {
+    ordersRepository.insertOrderItems.mockRejectedValue(new Error('boom'));
+
+    await expect(ordersService.createOrder(validInput)).rejects.toThrow('boom');
+
+    // A kitchen must never be shown a ticket for an order that failed.
+    expect(eventsService.publishOrderEvent).not.toHaveBeenCalled();
+  });
+
   test('stores no discount when no coupon code is supplied', async () => {
     await ordersService.createOrder(validInput);
 
@@ -394,6 +418,31 @@ describe('orders.service.updateOrderStatus', () => {
       'confirmed'
     );
     expect(result).toEqual({ id: 5, status: 'confirmed' });
+  });
+
+  test('publishes a status_changed event so other screens and the customer update', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      user_id: 3,
+      status: 'pending',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+    ordersRepository.updateOrderStatus.mockResolvedValue(true);
+    ordersRepository.findOrderWithItems.mockResolvedValue({
+      id: 5,
+      status: 'confirmed',
+    });
+
+    await ordersService.updateOrderStatus(5, ownerUser, 'confirmed');
+
+    expect(eventsService.publishOrderEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'order.status_changed',
+        storeId: 10,
+        userId: 3,
+      })
+    );
   });
 
   test('allows recalling one step back after a mis-bump', async () => {
