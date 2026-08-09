@@ -51,6 +51,16 @@ GoRouter buildAppRouter(AuthController authController) {
         path: '/',
         builder: (context, state) => const HomePage(),
       ),
+      // Direct link to one store's menu, e.g. /store/1 - shareable, and the
+      // entry point QR table ordering builds on.
+      GoRoute(
+        path: '/store/:storeId',
+        builder: (context, state) {
+          final storeId = int.tryParse(state.pathParameters['storeId'] ?? '');
+
+          return HomePage(initialStoreId: storeId);
+        },
+      ),
       GoRoute(
         path: '/checkout',
         builder: (context, state) {

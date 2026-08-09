@@ -21,7 +21,12 @@ import 'home/widgets/order_steps_section.dart';
 import 'home/widgets/top_bar.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  /// When set (via the /store/:storeId route), that store's menu is loaded
+  /// directly instead of defaulting to whichever store happens to come back
+  /// first from /stores/public - lets a store be linked to directly.
+  final int? initialStoreId;
+
+  const HomePage({super.key, this.initialStoreId});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -39,7 +44,16 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+
+    // Set before _loadStores so its "no store picked yet" default doesn't
+    // override the store named in the URL.
+    selectedStoreId = widget.initialStoreId;
+
     _loadStores();
+
+    if (selectedStoreId != null) {
+      _loadMenu(selectedStoreId!);
+    }
   }
 
   Future<void> _loadStores() async {
@@ -70,7 +84,10 @@ class _HomePageState extends State<HomePage> {
             )
           : <Map<String, dynamic>>[];
 
-      var newlySelectedStoreId = selectedStoreId;
+      // Only set when this call is what picked the store - if a store was
+      // already chosen (e.g. from /store/:storeId), initState has already
+      // kicked off its menu load and repeating it here would double-fetch.
+      int? newlySelectedStoreId;
 
       setState(() {
         stores = loadedStores;
