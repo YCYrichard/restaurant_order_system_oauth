@@ -1,3 +1,10 @@
+-- SUPERSEDED: kept only as a historical record of the schema as originally
+-- shipped. The live schema has since drifted from this file (e.g.
+-- owner_store_access, products.description/image_url, categories.updated_at,
+-- and users.role's 'owner' value were added by hand and were never reflected
+-- here). Do not run this file directly and do not edit it for new changes -
+-- database/migrations/ is now the source of truth; see docs/setup.md.
+
 CREATE TABLE users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(100) NOT NULL,

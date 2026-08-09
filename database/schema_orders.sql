@@ -1,3 +1,7 @@
+-- SUPERSEDED: kept only as a historical record. Do not run this file
+-- directly - database/migrations/ is now the source of truth for schema
+-- changes; see docs/setup.md.
+--
 -- Orders and Order Items tables for restaurant_order_system
 -- Import this file into your MySQL database after schema.sql
 

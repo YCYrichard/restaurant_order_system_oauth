@@ -10,14 +10,17 @@ This package includes:
 ## Quick start
 
 ### 1) MySQL
-Create a database named `restaurant_order_system` and import `database/schema.sql`.
+Create an empty database named `restaurant_order_system`.
 
 ### 2) Backend
 ```bash
 cd backend
 npm install
+npm run migrate
 npm run dev
 ```
+
+`npm run migrate` applies everything under `database/migrations/` (the source of truth for the schema — see `docs/setup.md`). `database/schema.sql` and `database/schema_orders.sql` are historical references only and are no longer imported directly.
 
 Backend runs at `http://localhost:3000`.
 
