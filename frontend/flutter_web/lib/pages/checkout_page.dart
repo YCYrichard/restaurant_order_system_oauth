@@ -36,6 +36,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   final _emailController = TextEditingController();
   final _notesController = TextEditingController();
   final _addressController = TextEditingController();
+  final _couponController = TextEditingController();
 
   bool _isSubmitting = false;
   String? _orderId;
@@ -64,6 +65,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _emailController.dispose();
     _notesController.dispose();
     _addressController.dispose();
+    _couponController.dispose();
     super.dispose();
   }
 
@@ -174,6 +176,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
           : null,
       'tableNumber':
           _fulfillmentType == 'dine_in' ? widget.tableNumber : null,
+      // Only the code goes over the wire - the server resolves the actual
+      // discount, so there's nothing here a client could inflate.
+      'couponCode': _couponController.text.trim().isEmpty
+          ? null
+          : _couponController.text.trim(),
     };
 
     try {
@@ -195,9 +202,23 @@ class _CheckoutPageState extends State<CheckoutPage> {
           _orderId = data['order']?['id']?.toString();
         });
       } else {
+        // Surface the server's own message where it's actionable (an
+        // expired or invalid coupon, a missing address) instead of a
+        // generic failure the customer can't do anything about.
+        String message = 'Failed to place order. Please try again.';
+
+        try {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map && decoded['message'] != null) {
+            message = decoded['message'].toString();
+          }
+        } catch (_) {
+          // Keep the generic message.
+        }
+
         setState(() {
           _isSubmitting = false;
-          _errorMessage = 'Failed to place order. Please try again.';
+          _errorMessage = message;
         });
       }
     } catch (e) {
@@ -403,6 +424,21 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       products: _products,
                       itemCount: _itemCount(lines),
                       subtotal: _subtotal(lines),
+                    ),
+                    const SizedBox(height: 20),
+                    _ContactField(
+                      controller: _couponController,
+                      label: 'Promo code (optional)',
+                      icon: Icons.local_offer_outlined,
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Any discount is applied and shown on your confirmed '
+                      'order.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF77716D),
+                      ),
                     ),
                     const SizedBox(height: 24),
                     if (_errorMessage != null) ...[

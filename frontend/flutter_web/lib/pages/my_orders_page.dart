@@ -220,6 +220,8 @@ class _MyOrdersPageState extends State<MyOrdersPage> {
     final status = order['status']?.toString() ?? 'pending';
     final storeName = order['store_name']?.toString() ?? 'Store';
     final total = double.tryParse(order['total'].toString()) ?? 0;
+    final discount =
+        double.tryParse(order['discount_amount']?.toString() ?? '0') ?? 0;
     final createdAt = order['created_at']?.toString();
     final items =
         order['items'] is List ? List.from(order['items']) : const [];
@@ -262,13 +264,28 @@ class _MyOrdersPageState extends State<MyOrdersPage> {
                     ),
                   ),
                 ),
-                Text(
-                  '\$${total.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                    color: Colors.deepOrange,
-                  ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '\$${total.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                        color: Colors.deepOrange,
+                      ),
+                    ),
+                    if (discount > 0)
+                      Text(
+                        'saved \$${discount.toStringAsFixed(2)}'
+                        '${order['coupon_code'] != null ? ' · ${order['coupon_code']}' : ''}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.green,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                  ],
                 ),
               ],
             ),

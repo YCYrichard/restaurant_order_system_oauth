@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/auth/auth_controller.dart';
 import '../../core/constants/app_config.dart';
+import 'widgets/coupons_panel.dart';
 import 'widgets/orders_panel.dart';
 import 'widgets/table_qr_panel.dart';
 import 'widgets/users_panel.dart';
@@ -1454,6 +1455,8 @@ class _AdminPageState extends State<AdminPage> {
                 OrdersPanel(selectedStore: selectedStore),
                 const SizedBox(height: 20),
                 TableQrPanel(selectedStore: selectedStore),
+                const SizedBox(height: 20),
+                CouponsPanel(selectedStore: selectedStore),
                 const SizedBox(height: 20),
                 UsersPanel(stores: stores),
               ],

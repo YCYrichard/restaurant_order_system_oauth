@@ -3,9 +3,16 @@ jest.mock('../../src/config/db', () => ({
   getConnection: jest.fn(),
 }));
 jest.mock('../../src/repositories/orders.repository');
+jest.mock('../../src/repositories/coupons.repository');
+jest.mock('../../src/services/coupons.service', () => {
+  const actual = jest.requireActual('../../src/services/coupons.service');
+  return { ...actual, resolveDiscount: jest.fn() };
+});
 
 const db = require('../../src/config/db');
 const ordersRepository = require('../../src/repositories/orders.repository');
+const couponsRepository = require('../../src/repositories/coupons.repository');
+const couponsService = require('../../src/services/coupons.service');
 const ordersService = require('../../src/services/orders.service');
 
 const validInput = {
@@ -209,6 +216,122 @@ describe('orders.service.createOrder fulfillment + item notes', () => {
       items,
       mockConnection
     );
+  });
+});
+
+describe('orders.service.createOrder coupon handling', () => {
+  let mockConnection;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+
+    mockConnection = {
+      beginTransaction: jest.fn().mockResolvedValue(undefined),
+      commit: jest.fn().mockResolvedValue(undefined),
+      rollback: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn(),
+    };
+
+    db.getConnection.mockResolvedValue(mockConnection);
+    ordersRepository.insertOrder.mockResolvedValue(42);
+    ordersRepository.insertOrderItems.mockResolvedValue(undefined);
+    ordersRepository.findOrderWithItems.mockResolvedValue({ id: 42 });
+    couponsRepository.incrementRedemptionCount.mockResolvedValue(true);
+    couponsRepository.insertRedemption.mockResolvedValue(undefined);
+  });
+
+  test('stores no discount when no coupon code is supplied', async () => {
+    await ordersService.createOrder(validInput);
+
+    expect(couponsService.resolveDiscount).not.toHaveBeenCalled();
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        total: 20,
+        discountAmount: 0,
+        couponCode: null,
+      }),
+      mockConnection
+    );
+  });
+
+  test('ignores any client-supplied discount and derives it from the code', async () => {
+    couponsService.resolveDiscount.mockResolvedValue({
+      coupon: { id: 7, code: 'SAVE10' },
+      discountAmount: 2,
+    });
+
+    // A client trying to dictate its own discount/total should have no
+    // effect - the server recomputes both.
+    await ordersService.createOrder({
+      ...validInput,
+      couponCode: 'save10',
+      discountAmount: 19.99,
+    });
+
+    expect(couponsService.resolveDiscount).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'save10', subtotal: 20 }),
+      mockConnection
+    );
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        total: 18,
+        discountAmount: 2,
+        couponCode: 'SAVE10',
+      }),
+      mockConnection
+    );
+  });
+
+  test('records a redemption row for the applied coupon', async () => {
+    couponsService.resolveDiscount.mockResolvedValue({
+      coupon: { id: 7, code: 'SAVE10' },
+      discountAmount: 2,
+    });
+
+    await ordersService.createOrder({
+      ...validInput,
+      userId: 3,
+      couponCode: 'SAVE10',
+    });
+
+    expect(couponsRepository.insertRedemption).toHaveBeenCalledWith(
+      expect.objectContaining({
+        couponId: 7,
+        orderId: 42,
+        userId: 3,
+        discountAmount: 2,
+      }),
+      mockConnection
+    );
+  });
+
+  test('rolls back if the coupon hits its cap between resolution and reservation', async () => {
+    couponsService.resolveDiscount.mockResolvedValue({
+      coupon: { id: 7, code: 'SAVE10' },
+      discountAmount: 2,
+    });
+    couponsRepository.incrementRedemptionCount.mockResolvedValue(false);
+
+    await expect(
+      ordersService.createOrder({ ...validInput, couponCode: 'SAVE10' })
+    ).rejects.toThrow('redemption limit');
+
+    expect(mockConnection.rollback).toHaveBeenCalled();
+    expect(mockConnection.commit).not.toHaveBeenCalled();
+    expect(ordersRepository.insertOrder).not.toHaveBeenCalled();
+  });
+
+  test('rolls back when the coupon itself is rejected', async () => {
+    couponsService.resolveDiscount.mockRejectedValue(
+      new couponsService.CouponValidationError('That coupon has expired')
+    );
+
+    await expect(
+      ordersService.createOrder({ ...validInput, couponCode: 'OLD' })
+    ).rejects.toThrow('That coupon has expired');
+
+    expect(mockConnection.rollback).toHaveBeenCalled();
+    expect(ordersRepository.insertOrder).not.toHaveBeenCalled();
   });
 });
 

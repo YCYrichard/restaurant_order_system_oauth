@@ -4,15 +4,18 @@ async function insertOrder(order, connection = db) {
   const [result] = await connection.execute(
     `
       INSERT INTO orders (
-        user_id, store_id, total, customer_name, customer_phone,
-        customer_email, notes, fulfillment_type, delivery_address, table_number
+        user_id, store_id, total, discount_amount, coupon_code,
+        customer_name, customer_phone, customer_email, notes,
+        fulfillment_type, delivery_address, table_number
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       order.userId || null,
       order.storeId,
       order.total,
+      order.discountAmount || 0,
+      order.couponCode || null,
       order.customerName,
       order.customerPhone,
       order.customerEmail || null,

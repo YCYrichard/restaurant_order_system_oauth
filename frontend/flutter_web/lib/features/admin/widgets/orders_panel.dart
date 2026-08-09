@@ -240,6 +240,8 @@ class _OrdersPanelState extends State<OrdersPanel> {
         order['items'] is List ? List.from(order['items']) : const [];
     final fulfillmentType =
         order['fulfillment_type']?.toString() ?? 'pickup';
+    final discount =
+        double.tryParse(order['discount_amount']?.toString() ?? '0') ?? 0;
     final nextStatus = _nextStatus(status);
     final isTerminal = status == 'completed' || status == 'cancelled';
 
@@ -278,12 +280,27 @@ class _OrdersPanelState extends State<OrdersPanel> {
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
-                Text(
-                  '\$${total.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    color: Colors.deepOrange,
-                  ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '\$${total.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: Colors.deepOrange,
+                      ),
+                    ),
+                    if (discount > 0)
+                      Text(
+                        '-\$${discount.toStringAsFixed(2)}'
+                        '${order['coupon_code'] != null ? ' ${order['coupon_code']}' : ''}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.green,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                  ],
                 ),
               ],
             ),

@@ -1,5 +1,7 @@
 const db = require('../config/db');
 const ordersRepository = require('../repositories/orders.repository');
+const couponsRepository = require('../repositories/coupons.repository');
+const couponsService = require('./coupons.service');
 
 const TOTAL_TOLERANCE = 0.01;
 
@@ -156,6 +158,7 @@ async function createOrder(input) {
     fulfillmentType,
     deliveryAddress,
     tableNumber,
+    couponCode,
   } = input;
 
   const connection = await db.getConnection();
@@ -164,11 +167,45 @@ async function createOrder(input) {
   try {
     await connection.beginTransaction();
 
+    // `total` has already been reconciled against the line items, so it's
+    // the trustworthy pre-discount subtotal. Any discount is derived here
+    // from the coupon code alone - the client never supplies an amount, or
+    // it could simply claim its own discount.
+    const subtotal = Number(total);
+    let discountAmount = 0;
+    let appliedCoupon = null;
+
+    if (couponCode) {
+      const resolved = await couponsService.resolveDiscount(
+        { code: couponCode, storeId, subtotal, userId },
+        connection
+      );
+
+      appliedCoupon = resolved.coupon;
+      discountAmount = resolved.discountAmount;
+
+      // Conditional increment - if this returns false the coupon hit its
+      // cap between resolution and here (concurrent checkout), so the whole
+      // order rolls back rather than over-redeeming.
+      const reserved = await couponsRepository.incrementRedemptionCount(
+        appliedCoupon.id,
+        connection
+      );
+
+      if (!reserved) {
+        throw new couponsService.CouponValidationError(
+          'That coupon has reached its redemption limit'
+        );
+      }
+    }
+
     orderId = await ordersRepository.insertOrder(
       {
         userId,
         storeId,
-        total,
+        total: Math.round((subtotal - discountAmount) * 100) / 100,
+        discountAmount,
+        couponCode: appliedCoupon ? appliedCoupon.code : null,
         customerName,
         customerPhone,
         customerEmail,
@@ -183,6 +220,18 @@ async function createOrder(input) {
     );
 
     await ordersRepository.insertOrderItems(orderId, items, connection);
+
+    if (appliedCoupon) {
+      await couponsRepository.insertRedemption(
+        {
+          couponId: appliedCoupon.id,
+          orderId,
+          userId,
+          discountAmount,
+        },
+        connection
+      );
+    }
 
     await connection.commit();
   } catch (error) {

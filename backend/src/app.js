@@ -12,6 +12,7 @@ const storesRoutes = require('./routes/stores.routes');
 const productsRoutes = require('./routes/products.routes');
 const categoriesRoutes = require('./routes/categories.routes');
 const usersRoutes = require('./routes/users.routes');
+const couponsRoutes = require('./routes/coupons.routes');
 const requestId = require('./middleware/requestId.middleware');
 const { notFoundHandler, errorHandler } = require('./middleware/error.middleware');
 
@@ -63,6 +64,7 @@ app.use('/categories', categoriesRoutes);
 // updating every existing frontend call site, which is a separate,
 // deliberately deferred migration rather than something to fold in here.
 app.use('/api/v1/users', usersRoutes);
+app.use('/api/v1/coupons', couponsRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
