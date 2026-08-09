@@ -1,8 +1,10 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 
 require('dotenv').config();
+require('./config/env'); // fail fast if required env vars are missing
 
 const authRoutes = require('./routes/auth.routes');
 const orderRoutes = require('./routes/orders.routes');
@@ -39,6 +41,7 @@ app.use(
 );
 
 app.use(express.json());
+app.use(cookieParser());
 
 app.get('/health', (_, res) => {
   res.json({

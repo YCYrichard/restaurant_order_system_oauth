@@ -1,11 +1,13 @@
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
 
+const env = require('../config/env');
+
 // Reuses JWT_SECRET to sign short-lived OAuth 'state' tokens. This is a
-// distinct token purpose from user session tokens (see auth.controller.js
-// signUser) - it only proves the callback round-tripped through our own
-// redirect, per the authorization-code flow CSRF requirement.
-const STATE_SECRET = process.env.JWT_SECRET || 'change_me';
+// distinct token purpose from user session tokens (see token.service.js
+// issueAccessToken) - it only proves the callback round-tripped through our
+// own redirect, per the authorization-code flow CSRF requirement.
+const STATE_SECRET = env.JWT_SECRET;
 const STATE_TTL_SECONDS = 300; // 5 minutes - long enough to complete provider login
 
 function createOAuthState(provider) {

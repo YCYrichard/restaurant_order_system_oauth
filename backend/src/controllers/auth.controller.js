@@ -2,6 +2,8 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
 const db = require('../config/db');
+const env = require('../config/env');
+const tokenService = require('../services/token.service');
 
 const {
   buildGoogleAuthUrl,
@@ -13,23 +15,39 @@ const {
   exchangeLineCode,
 } = require('../services/oauth.service');
 
-const FRONTEND_URL =
-  process.env.FRONTEND_URL || 'http://localhost:5000';
+const FRONTEND_URL = env.FRONTEND_URL;
 
-function signUser(user) {
-  return jwt.sign(
-    {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      provider: user.provider,
-      role: user.role || 'customer',
-    },
-    process.env.JWT_SECRET || 'change_me',
-    {
-      expiresIn: '7d',
-    }
-  );
+const REFRESH_COOKIE_NAME = 'refresh_token';
+const REFRESH_COOKIE_PATH = '/auth';
+
+function setRefreshCookie(res, token) {
+  res.cookie(REFRESH_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    path: REFRESH_COOKIE_PATH,
+    maxAge: tokenService.REFRESH_TOKEN_TTL_MS,
+  });
+}
+
+function clearRefreshCookie(res) {
+  res.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
+}
+
+// Issues an access token and sets a rotating refresh token cookie. Used by
+// every login path (OAuth callbacks and local admin login) so they all get
+// the same session shape.
+async function issueSession(res, user, req) {
+  const accessToken = tokenService.issueAccessToken(user);
+
+  const refreshToken = await tokenService.issueRefreshToken(user.id, {
+    userAgent: req.headers['user-agent'],
+    ip: req.ip,
+  });
+
+  setRefreshCookie(res, refreshToken);
+
+  return accessToken;
 }
 
 async function upsertUser({
@@ -214,7 +232,7 @@ exports.googleCallback = async (req, res) => {
       avatarUrl: getProfileAvatar(profile),
     });
 
-    const token = signUser(user);
+    const token = await issueSession(res, user, req);
 
     return res.redirect(redirectToFrontend(token));
   } catch (error) {
@@ -279,7 +297,7 @@ exports.facebookCallback = async (req, res) => {
       avatarUrl: getProfileAvatar(profile),
     });
 
-    const token = signUser(user);
+    const token = await issueSession(res, user, req);
 
     return res.redirect(redirectToFrontend(token));
   } catch (error) {
@@ -344,7 +362,7 @@ exports.lineCallback = async (req, res) => {
       avatarUrl: getProfileAvatar(profile),
     });
 
-    const token = signUser(user);
+    const token = await issueSession(res, user, req);
 
     return res.redirect(redirectToFrontend(token));
   } catch (error) {
@@ -410,7 +428,7 @@ exports.adminLogin = async (req, res) => {
       });
     }
 
-    const token = signUser(user);
+    const token = await issueSession(res, user, req);
 
     return res.status(200).json({
       message: 'Admin login successful',
@@ -432,6 +450,91 @@ exports.adminLogin = async (req, res) => {
   }
 };
 
+exports.refresh = async (req, res) => {
+  try {
+    const presentedToken = req.cookies?.[REFRESH_COOKIE_NAME];
+
+    if (!presentedToken) {
+      return res.status(401).json({
+        message: 'Refresh token is required',
+      });
+    }
+
+    const result = await tokenService.rotateRefreshToken(presentedToken, {
+      userAgent: req.headers['user-agent'],
+      ip: req.ip,
+    });
+
+    if (result.error) {
+      clearRefreshCookie(res);
+      return res.status(401).json({
+        message: 'Refresh token is invalid or expired',
+      });
+    }
+
+    const [rows] = await db.execute(
+      `
+        SELECT *
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [result.userId]
+    );
+
+    if (rows.length === 0) {
+      clearRefreshCookie(res);
+      return res.status(401).json({
+        message: 'User not found',
+      });
+    }
+
+    const user = rows[0];
+    const accessToken = tokenService.issueAccessToken(user);
+
+    setRefreshCookie(res, result.token);
+
+    return res.status(200).json({
+      token: accessToken,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        provider: user.provider,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    console.error('Refresh token error:', error);
+
+    return res.status(500).json({
+      message: 'Unable to refresh session',
+    });
+  }
+};
+
+exports.logout = async (req, res) => {
+  try {
+    const presentedToken = req.cookies?.[REFRESH_COOKIE_NAME];
+
+    if (presentedToken) {
+      await tokenService.revokeRefreshToken(presentedToken);
+    }
+
+    clearRefreshCookie(res);
+
+    return res.status(200).json({
+      message: 'Logged out',
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
+
+    return res.status(500).json({
+      message: 'Unable to log out',
+    });
+  }
+};
+
 exports.me = async (req, res) => {
   try {
     const authorization = req.headers.authorization || '';
@@ -444,10 +547,7 @@ exports.me = async (req, res) => {
 
     const token = authorization.substring('Bearer '.length);
 
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET || 'change_me'
-    );
+    const decoded = jwt.verify(token, env.JWT_SECRET);
 
     const [rows] = await db.execute(
       `

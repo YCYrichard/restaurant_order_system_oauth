@@ -1,4 +1,12 @@
-const app = require('./app');
+require('dotenv').config();
+
+let app;
+try {
+  app = require('./app');
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
 
 const port = process.env.PORT || 3000;
 

@@ -16,8 +16,7 @@ class AdminLoginPage extends StatefulWidget {
 }
 
 class _AdminLoginPageState extends State<AdminLoginPage> {
-  final TextEditingController _usernameController =
-      TextEditingController(text: 'supermao');
+  final TextEditingController _usernameController = TextEditingController();
 
   final TextEditingController _passwordController =
       TextEditingController();
