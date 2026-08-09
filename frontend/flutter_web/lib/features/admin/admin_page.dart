@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/auth/auth_controller.dart';
 import '../../core/constants/app_config.dart';
+import 'widgets/users_panel.dart';
 
 class AdminPage extends StatefulWidget {
   const AdminPage({super.key});
@@ -1447,6 +1448,8 @@ class _AdminPageState extends State<AdminPage> {
                     );
                   },
                 ),
+                const SizedBox(height: 20),
+                UsersPanel(stores: stores),
               ],
             ),
           ),

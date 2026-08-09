@@ -77,6 +77,53 @@ class AuthController extends ChangeNotifier {
     );
   }
 
+  /// Authenticated request with the current access token attached. On a
+  /// 401/403, tries one silent refresh and retries once before giving up -
+  /// callers just see the final response either way.
+  Future<http.Response> authorizedRequest(
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+  }) async {
+    Future<http.Response> send() {
+      final uri = Uri.parse('$apiBaseUrl$path');
+      final headers = <String, String>{
+        'Accept': 'application/json',
+        if (_token != null && _token!.isNotEmpty)
+          'Authorization': 'Bearer $_token',
+        if (body != null) 'Content-Type': 'application/json',
+      };
+      final encodedBody = body != null ? jsonEncode(body) : null;
+
+      switch (method) {
+        case 'GET':
+          return _client.get(uri, headers: headers);
+        case 'POST':
+          return _client.post(uri, headers: headers, body: encodedBody);
+        case 'PUT':
+          return _client.put(uri, headers: headers, body: encodedBody);
+        case 'PATCH':
+          return _client.patch(uri, headers: headers, body: encodedBody);
+        case 'DELETE':
+          return _client.delete(uri, headers: headers);
+        default:
+          throw ArgumentError('Unsupported method: $method');
+      }
+    }
+
+    var response = await send();
+
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      final refreshed = await refresh();
+
+      if (refreshed) {
+        response = await send();
+      }
+    }
+
+    return response;
+  }
+
   /// Called after any successful login (OAuth callback or admin login).
   void setSession(String token) {
     _applyToken(token);

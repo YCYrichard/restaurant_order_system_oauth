@@ -11,6 +11,7 @@ const orderRoutes = require('./routes/orders.routes');
 const storesRoutes = require('./routes/stores.routes');
 const productsRoutes = require('./routes/products.routes');
 const categoriesRoutes = require('./routes/categories.routes');
+const usersRoutes = require('./routes/users.routes');
 const requestId = require('./middleware/requestId.middleware');
 const { notFoundHandler, errorHandler } = require('./middleware/error.middleware');
 
@@ -55,6 +56,13 @@ app.use('/orders', orderRoutes);
 app.use('/stores', storesRoutes);
 app.use('/products', productsRoutes);
 app.use('/categories', categoriesRoutes);
+
+// New resources are mounted under /api/v1 per the skill's versioned-
+// resource convention. The existing resources above predate that
+// convention and stay unversioned for now - retrofitting them means
+// updating every existing frontend call site, which is a separate,
+// deliberately deferred migration rather than something to fold in here.
+app.use('/api/v1/users', usersRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
