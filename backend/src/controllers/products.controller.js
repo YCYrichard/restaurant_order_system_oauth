@@ -104,6 +104,7 @@ exports.listPublicProductsByStore = async (req, res) => {
           ON c.id = p.category_id
         WHERE p.store_id = ?
           AND p.is_active = TRUE
+          AND (p.unavailable_until IS NULL OR p.unavailable_until <= NOW())
         ORDER BY c.sort_order ASC, p.name ASC
       `,
       [storeId]
@@ -318,6 +319,67 @@ exports.updateProduct = async (req, res) => {
 
     return res.status(500).json({
       message: 'Failed to update product',
+    });
+  }
+};
+
+// "86" an item: temporarily out, expiring on its own. Distinct from
+// is_active, which is a deliberate delisting someone has to undo by hand.
+exports.updateProductAvailability = async (req, res) => {
+  try {
+    const productId = Number(req.params.productId);
+
+    const access = await resolveProductAccess(productId, req.user);
+    if (access.error) {
+      return res.status(access.error.status).json({
+        message: access.error.message,
+      });
+    }
+
+    const available = req.body.available === true;
+    let unavailableUntil = null;
+
+    if (!available) {
+      const minutes = Number(req.body.minutes);
+
+      if (Number.isFinite(minutes) && minutes > 0) {
+        unavailableUntil = new Date(Date.now() + minutes * 60 * 1000);
+      } else {
+        // Default: back on the menu tomorrow, so nobody has to remember to
+        // restore it after service.
+        const endOfDay = new Date();
+        endOfDay.setHours(23, 59, 59, 0);
+        unavailableUntil = endOfDay;
+      }
+    }
+
+    await db.execute(
+      `
+        UPDATE products
+        SET unavailable_until = ?
+        WHERE id = ?
+      `,
+      [unavailableUntil, productId]
+    );
+
+    const [rows] = await db.execute(
+      `
+        SELECT *
+        FROM products
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [productId]
+    );
+
+    return res.status(200).json({
+      product: rows[0],
+    });
+  } catch (error) {
+    console.error('Update product availability error:', error);
+
+    return res.status(500).json({
+      message: 'Failed to update product availability',
     });
   }
 };

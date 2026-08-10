@@ -211,6 +211,27 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    // Stop the customer at the cart rather than letting them fill in a whole
+    // checkout form only to have the server reject it. The server check is
+    // still the authority - this is just a courtesy.
+    final selectedStore = stores.firstWhere(
+      (store) => int.tryParse(store['id'].toString()) == selectedStoreId,
+      orElse: () => const <String, dynamic>{},
+    );
+
+    if (selectedStore['is_open'] == false) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            selectedStore['closed_reason']?.toString() ??
+                'This store is currently closed.',
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
     final tableParam =
         widget.tableNumber != null ? '&table=${widget.tableNumber}' : '';
 

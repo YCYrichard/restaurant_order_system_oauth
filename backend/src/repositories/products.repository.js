@@ -14,7 +14,10 @@ async function findProductsByIds(storeId, productIds, connection = db) {
 
   const [rows] = await connection.execute(
     `
-      SELECT id, store_id, name, price, is_active
+      SELECT
+        id, store_id, name, price, is_active, unavailable_until,
+        (unavailable_until IS NOT NULL AND unavailable_until > NOW())
+          AS is_eighty_sixed
       FROM products
       WHERE store_id = ?
         AND id IN (${placeholders})

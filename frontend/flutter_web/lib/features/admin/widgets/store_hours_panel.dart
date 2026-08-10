@@ -1,0 +1,503 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../../../core/auth/auth_controller.dart';
+
+/// Opening hours and holiday closures for the selected store.
+///
+/// A store with no hours saved is treated as always open by the backend, so
+/// this panel is opt-in configuration rather than something every store must
+/// fill in before it can trade.
+class StoreHoursPanel extends StatefulWidget {
+  final Map<String, dynamic>? selectedStore;
+
+  const StoreHoursPanel({super.key, required this.selectedStore});
+
+  @override
+  State<StoreHoursPanel> createState() => _StoreHoursPanelState();
+}
+
+class _StoreHoursPanelState extends State<StoreHoursPanel> {
+  static const _dayNames = [
+    'Sunday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+  ];
+
+  // Index 0-6, Sunday first, matching the backend's day_of_week.
+  late List<_DayRow> _days;
+  List<Map<String, dynamic>> _closures = [];
+
+  bool _loading = false;
+  bool _saving = false;
+  String? _message;
+  bool _messageIsError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _days = List.generate(7, (index) => _DayRow(dayOfWeek: index));
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant StoreHoursPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.selectedStore?['id'] != widget.selectedStore?['id']) {
+      _load();
+    }
+  }
+
+  AuthController get _auth => context.read<AuthController>();
+
+  void _showMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
+    setState(() {
+      _message = message;
+      _messageIsError = isError;
+    });
+  }
+
+  Future<void> _load() async {
+    final storeId = widget.selectedStore?['id'];
+    if (storeId == null) return;
+
+    setState(() => _loading = true);
+
+    try {
+      final response =
+          await _auth.authorizedRequest('GET', '/stores/$storeId/hours');
+
+      if (response.statusCode != 200) {
+        _showMessage('Failed to load hours.', isError: true);
+        setState(() => _loading = false);
+        return;
+      }
+
+      final decoded = jsonDecode(response.body);
+      final hours = decoded is Map && decoded['hours'] is List
+          ? decoded['hours'] as List
+          : const [];
+      final closures = decoded is Map && decoded['closures'] is List
+          ? List<Map<String, dynamic>>.from(
+              (decoded['closures'] as List)
+                  .whereType<Map>()
+                  .map((c) => Map<String, dynamic>.from(c)),
+            )
+          : <Map<String, dynamic>>[];
+
+      final rows = List.generate(7, (index) => _DayRow(dayOfWeek: index));
+
+      for (final entry in hours) {
+        if (entry is! Map) continue;
+        final day = int.tryParse(entry['day_of_week'].toString());
+        if (day == null || day < 0 || day > 6) continue;
+
+        rows[day] = _DayRow(
+          dayOfWeek: day,
+          isClosed: entry['is_closed'] == 1 || entry['is_closed'] == true,
+          openTime: '${entry['open_time']}'.substring(0, 5),
+          closeTime: '${entry['close_time']}'.substring(0, 5),
+          configured: true,
+        );
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _days = rows;
+        _closures = closures;
+        _loading = false;
+      });
+    } catch (error) {
+      setState(() => _loading = false);
+      _showMessage('Network error loading hours: $error', isError: true);
+    }
+  }
+
+  Future<void> _save() async {
+    final storeId = widget.selectedStore?['id'];
+    if (storeId == null) return;
+
+    setState(() => _saving = true);
+
+    try {
+      final response = await _auth.authorizedRequest(
+        'PUT',
+        '/stores/$storeId/hours',
+        body: {
+          'hours': _days
+              .map((day) => {
+                    'dayOfWeek': day.dayOfWeek,
+                    'isClosed': day.isClosed,
+                    'openTime': day.openTime,
+                    'closeTime': day.closeTime,
+                  })
+              .toList(),
+        },
+      );
+
+      if (response.statusCode != 200) {
+        final decoded = jsonDecode(response.body);
+        _showMessage(
+          decoded is Map && decoded['message'] != null
+              ? decoded['message'].toString()
+              : 'Failed to save hours.',
+          isError: true,
+        );
+        setState(() => _saving = false);
+        return;
+      }
+
+      setState(() => _saving = false);
+      _showMessage('Hours saved.');
+      await _load();
+    } catch (error) {
+      setState(() => _saving = false);
+      _showMessage('Network error saving hours: $error', isError: true);
+    }
+  }
+
+  Future<void> _clearHours() async {
+    final storeId = widget.selectedStore?['id'];
+    if (storeId == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Always open?'),
+        content: const Text(
+          'Removing all hours means this store never shows as closed and '
+          'always accepts orders. Continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Remove hours'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final response = await _auth.authorizedRequest(
+      'PUT',
+      '/stores/$storeId/hours',
+      body: {'hours': []},
+    );
+
+    if (response.statusCode == 200) {
+      _showMessage('Hours removed — this store is always open.');
+      await _load();
+    }
+  }
+
+  Future<void> _addClosure() async {
+    final storeId = widget.selectedStore?['id'];
+    if (storeId == null) return;
+
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDate: DateTime.now(),
+    );
+
+    if (picked == null || !mounted) return;
+
+    final reasonController = TextEditingController();
+    final reason = await showDialog<String?>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Closure reason'),
+        content: TextField(
+          controller: reasonController,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'e.g. Lunar New Year',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(reasonController.text),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+
+    if (reason == null) return;
+
+    final isoDate = '${picked.year.toString().padLeft(4, '0')}-'
+        '${picked.month.toString().padLeft(2, '0')}-'
+        '${picked.day.toString().padLeft(2, '0')}';
+
+    final response = await _auth.authorizedRequest(
+      'POST',
+      '/stores/$storeId/closures',
+      body: {'date': isoDate, 'reason': reason},
+    );
+
+    if (response.statusCode == 201) {
+      _showMessage('Closure added for $isoDate.');
+      await _load();
+    } else {
+      _showMessage('Failed to add closure.', isError: true);
+    }
+  }
+
+  Future<void> _removeClosure(String date) async {
+    final storeId = widget.selectedStore?['id'];
+    if (storeId == null) return;
+
+    final response = await _auth.authorizedRequest(
+      'DELETE',
+      '/stores/$storeId/closures/$date',
+    );
+
+    if (response.statusCode == 200) {
+      await _load();
+    }
+  }
+
+  Future<void> _pickTime(_DayRow day, {required bool isOpenTime}) async {
+    final current = isOpenTime ? day.openTime : day.closeTime;
+    final parts = current.split(':');
+
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(
+        hour: int.tryParse(parts.first) ?? 9,
+        minute: int.tryParse(parts.last) ?? 0,
+      ),
+    );
+
+    if (picked == null) return;
+
+    final formatted = '${picked.hour.toString().padLeft(2, '0')}:'
+        '${picked.minute.toString().padLeft(2, '0')}';
+
+    setState(() {
+      if (isOpenTime) {
+        day.openTime = formatted;
+      } else {
+        day.closeTime = formatted;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Colors.white,
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Opening Hours',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _loading ? null : _load,
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh hours',
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Orders are refused while the store is closed. A store with no '
+              'hours set is always open.',
+              style: TextStyle(fontSize: 12, color: Color(0xFF77716D)),
+            ),
+            const SizedBox(height: 12),
+            if (_message != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: _messageIsError
+                      ? const Color(0xFFFFEDEA)
+                      : const Color(0xFFE8F6EC),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  _message!,
+                  style: TextStyle(
+                    color: _messageIsError
+                        ? Colors.redAccent
+                        : Colors.green.shade800,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            if (widget.selectedStore == null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFAFAFA),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Text(
+                  'Select a store to set its hours.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Color(0xFF625D5A)),
+                ),
+              )
+            else if (_loading)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(),
+                ),
+              )
+            else ...[
+              ..._days.map(_buildDayRow),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  FilledButton.icon(
+                    onPressed: _saving ? null : _save,
+                    icon: const Icon(Icons.save),
+                    label: Text(_saving ? 'Saving...' : 'Save hours'),
+                  ),
+                  const SizedBox(width: 12),
+                  TextButton(
+                    onPressed: _saving ? null : _clearHours,
+                    child: const Text('Always open'),
+                  ),
+                ],
+              ),
+              const Divider(height: 32),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Holiday closures',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _addClosure,
+                    icon: const Icon(Icons.event_busy, size: 18),
+                    label: const Text('Add'),
+                  ),
+                ],
+              ),
+              if (_closures.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'No upcoming closures.',
+                    style: TextStyle(color: Color(0xFF77716D), fontSize: 13),
+                  ),
+                )
+              else
+                ..._closures.map((closure) {
+                  final date =
+                      closure['closure_date'].toString().split('T').first;
+
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    leading: const Icon(Icons.event_busy, size: 20),
+                    title: Text(date),
+                    subtitle: Text(closure['reason']?.toString() ?? ''),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => _removeClosure(date),
+                    ),
+                  );
+                }),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDayRow(_DayRow day) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              _dayNames[day.dayOfWeek],
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          Switch(
+            value: !day.isClosed,
+            onChanged: (open) => setState(() => day.isClosed = !open),
+          ),
+          const SizedBox(width: 8),
+          if (day.isClosed)
+            const Text(
+              'Closed',
+              style: TextStyle(color: Color(0xFF77716D)),
+            )
+          else ...[
+            OutlinedButton(
+              onPressed: () => _pickTime(day, isOpenTime: true),
+              child: Text(day.openTime),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: Text('to'),
+            ),
+            OutlinedButton(
+              onPressed: () => _pickTime(day, isOpenTime: false),
+              child: Text(day.closeTime),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DayRow {
+  final int dayOfWeek;
+  bool isClosed;
+  String openTime;
+  String closeTime;
+  final bool configured;
+
+  _DayRow({
+    required this.dayOfWeek,
+    this.isClosed = false,
+    this.openTime = '09:00',
+    this.closeTime = '21:00',
+    this.configured = false,
+  });
+}

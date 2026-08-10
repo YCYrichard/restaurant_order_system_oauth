@@ -52,11 +52,21 @@ class StoreSelectorSection extends StatelessWidget {
                       final isSelected =
                           storeId != null && storeId == selectedStoreId;
 
+                      // Backend defaults is_open to true when a store has
+                      // no hours configured, so an older payload without the
+                      // field must not read as closed.
+                      final isOpen = store['is_open'] != false;
+
                       return _StoreCard(
                         name: store['name']?.toString() ?? 'Unnamed store',
                         address: store['address']?.toString(),
                         phone: store['phone']?.toString(),
                         isSelected: isSelected,
+                        isOpen: isOpen,
+                        closedReason: store['closed_reason']?.toString(),
+                        todayHours: store['today_hours'] is Map
+                            ? '${store['today_hours']['open']}-${store['today_hours']['close']}'
+                            : null,
                         onTap: storeId == null
                             ? null
                             : () => onSelectStore(storeId),
@@ -100,6 +110,9 @@ class _StoreCard extends StatelessWidget {
   final String? address;
   final String? phone;
   final bool isSelected;
+  final bool isOpen;
+  final String? closedReason;
+  final String? todayHours;
   final VoidCallback? onTap;
 
   const _StoreCard({
@@ -107,6 +120,9 @@ class _StoreCard extends StatelessWidget {
     required this.address,
     required this.phone,
     required this.isSelected,
+    required this.isOpen,
+    required this.closedReason,
+    required this.todayHours,
     required this.onTap,
   });
 
@@ -143,13 +159,62 @@ class _StoreCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      name,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                      ),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            name,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isOpen
+                                ? Colors.green.withValues(alpha: 0.12)
+                                : Colors.red.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            isOpen ? 'OPEN' : 'CLOSED',
+                            style: TextStyle(
+                              color: isOpen
+                                  ? Colors.green.shade800
+                                  : Colors.red.shade700,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
+                    if (!isOpen && closedReason != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        closedReason!,
+                        style: TextStyle(
+                          color: Colors.red.shade700,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ] else if (isOpen && todayHours != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'Today $todayHours',
+                        style: const TextStyle(
+                          color: Color(0xFF77716D),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                     if (address != null && address!.isNotEmpty) ...[
                       const SizedBox(height: 6),
                       Text(

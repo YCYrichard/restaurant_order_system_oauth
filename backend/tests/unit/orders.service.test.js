@@ -4,6 +4,8 @@ jest.mock('../../src/config/db', () => ({
 }));
 jest.mock('../../src/repositories/orders.repository');
 jest.mock('../../src/repositories/products.repository');
+jest.mock('../../src/repositories/stores.repository');
+jest.mock('../../src/services/store-hours.service');
 jest.mock('../../src/repositories/coupons.repository');
 jest.mock('../../src/services/events.service');
 jest.mock('../../src/services/coupons.service', () => {
@@ -14,6 +16,8 @@ jest.mock('../../src/services/coupons.service', () => {
 const db = require('../../src/config/db');
 const ordersRepository = require('../../src/repositories/orders.repository');
 const productsRepository = require('../../src/repositories/products.repository');
+const storesRepository = require('../../src/repositories/stores.repository');
+const storeHoursService = require('../../src/services/store-hours.service');
 const couponsRepository = require('../../src/repositories/coupons.repository');
 const couponsService = require('../../src/services/coupons.service');
 const eventsService = require('../../src/services/events.service');
@@ -34,6 +38,18 @@ function mockCatalog(overrides = {}) {
   productsRepository.findProductsByIds.mockResolvedValue([
     { id: 1, store_id: 1, name: 'Test Product', price: 10, is_active: 1, ...overrides },
   ]);
+
+  // createOrder now resolves the store and checks opening hours before
+  // pricing, so both need to succeed for the pricing paths to be reached.
+  storesRepository.findStoreById.mockResolvedValue({
+    id: 1,
+    name: 'Test Store',
+    timezone: 'Asia/Taipei',
+  });
+  storeHoursService.getStoreOpenState.mockResolvedValue({
+    isOpen: true,
+    reason: null,
+  });
 }
 
 describe('orders.service.createOrder', () => {
@@ -128,6 +144,39 @@ describe('orders.service.createOrder', () => {
     );
 
     expect(db.getConnection).not.toHaveBeenCalled();
+  });
+
+  test('rejects an item the kitchen has 86\'d, even from a stale cart', async () => {
+    mockCatalog({ is_eighty_sixed: 1, name: 'Sold Out Special' });
+
+    await expect(ordersService.createOrder(validInput)).rejects.toThrow(
+      /Sold Out Special has just sold out/
+    );
+
+    expect(db.getConnection).not.toHaveBeenCalled();
+  });
+
+  test('refuses orders while the store is closed', async () => {
+    storeHoursService.getStoreOpenState.mockResolvedValue({
+      isOpen: false,
+      reason: 'Closed on Monday',
+    });
+
+    await expect(ordersService.createOrder(validInput)).rejects.toThrow(
+      ordersService.StoreClosedError
+    );
+
+    // Rejected before any pricing or connection work.
+    expect(productsRepository.findProductsByIds).not.toHaveBeenCalled();
+    expect(db.getConnection).not.toHaveBeenCalled();
+  });
+
+  test('rejects an order for a store that does not exist', async () => {
+    storesRepository.findStoreById.mockResolvedValue(null);
+
+    await expect(ordersService.createOrder(validInput)).rejects.toThrow(
+      /store does not exist/
+    );
   });
 
   test('commits the transaction and returns the created order on success', async () => {

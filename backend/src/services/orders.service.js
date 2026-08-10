@@ -1,6 +1,8 @@
 const db = require('../config/db');
 const ordersRepository = require('../repositories/orders.repository');
 const productsRepository = require('../repositories/products.repository');
+const storesRepository = require('../repositories/stores.repository');
+const storeHoursService = require('./store-hours.service');
 const couponsRepository = require('../repositories/coupons.repository');
 const couponsService = require('./coupons.service');
 const eventsService = require('./events.service');
@@ -29,6 +31,14 @@ class OrderValidationError extends Error {
     super(message);
     this.status = 400;
     this.code = 'ORDER_VALIDATION_ERROR';
+  }
+}
+
+class StoreClosedError extends Error {
+  constructor(message) {
+    super(message);
+    this.status = 409;
+    this.code = 'STORE_CLOSED';
   }
 }
 
@@ -183,6 +193,13 @@ async function resolvePricedItems(storeId, items) {
       throw new OrderValidationError(`${product.name} is no longer available`);
     }
 
+    // A cart opened before the kitchen 86'd something must not slip through.
+    if (product.is_eighty_sixed) {
+      throw new OrderValidationError(
+        `${product.name} has just sold out. Please remove it from your order.`
+      );
+    }
+
     return {
       productId: Number(product.id),
       quantity: Number(item.quantity),
@@ -209,6 +226,22 @@ async function createOrder(input) {
     tableNumber,
     couponCode,
   } = input;
+
+  // Enforced here rather than only in the UI - otherwise the rule is
+  // decorative and a direct POST still drops a ticket into a dark kitchen.
+  const store = await storesRepository.findStoreById(storeId);
+
+  if (!store) {
+    throw new OrderValidationError('That store does not exist');
+  }
+
+  const openState = await storeHoursService.getStoreOpenState(store);
+
+  if (!openState.isOpen) {
+    throw new StoreClosedError(
+      `${store.name} is not accepting orders right now. ${openState.reason ?? ''}`.trim()
+    );
+  }
 
   // Priced from the database before the transaction opens - a stale cart
   // should fail fast without holding a connection.
@@ -398,6 +431,7 @@ module.exports = {
   OrderValidationError,
   OrderNotFoundError,
   OrderAccessDeniedError,
+  StoreClosedError,
   createOrder,
   getOrdersForUser,
   getOrderById,

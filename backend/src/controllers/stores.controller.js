@@ -55,6 +55,53 @@ exports.updateStore = async (req, res, next) => {
   }
 };
 
+exports.getStoreHours = async (req, res, next) => {
+  try {
+    const storeId = Number(req.params.storeId);
+    const result = await storesService.getStoreHours(storeId);
+
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.replaceStoreHours = async (req, res, next) => {
+  try {
+    const storeId = Number(req.params.storeId);
+    const result = await storesService.replaceStoreHours(
+      storeId,
+      req.body.hours
+    );
+
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.addStoreClosure = async (req, res, next) => {
+  try {
+    const storeId = Number(req.params.storeId);
+    const result = await storesService.addStoreClosure(storeId, req.body);
+
+    res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.removeStoreClosure = async (req, res, next) => {
+  try {
+    const storeId = Number(req.params.storeId);
+    await storesService.removeStoreClosure(storeId, req.params.date);
+
+    res.status(200).json({ message: 'Closure removed' });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.updateStoreStatus = async (req, res, next) => {
   try {
     const storeId = Number(req.params.storeId);

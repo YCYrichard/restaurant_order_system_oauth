@@ -288,6 +288,22 @@ class _KitchenPageState extends State<KitchenPage> {
     oscillator.stop(context.currentTime + 0.18);
   }
 
+  /// Lets the cook mark an item sold out from the pass, where the shortage
+  /// is actually discovered - rather than making someone walk to the admin
+  /// dashboard mid-service. The 86 expires by itself at end of day.
+  Future<void> _showEightySixSheet() async {
+    final storeId = _selectedStoreId;
+    if (storeId == null) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => _EightySixDialog(
+        auth: _auth,
+        storeId: storeId,
+      ),
+    );
+  }
+
   void _toggleFullscreen() {
     if (web.document.fullscreenElement == null) {
       web.document.documentElement?.requestFullscreen();
@@ -480,6 +496,12 @@ class _KitchenPageState extends State<KitchenPage> {
               _soundEnabled ? Icons.volume_up : Icons.volume_off,
               color: _soundEnabled ? Colors.deepOrange : Colors.white38,
             ),
+          ),
+          IconButton(
+            onPressed: _selectedStoreId == null ? null : _showEightySixSheet,
+            tooltip: "86 an item (mark sold out)",
+            icon: const Icon(Icons.remove_shopping_cart_outlined,
+                color: Colors.white70),
           ),
           IconButton(
             onPressed: _toggleFullscreen,
@@ -775,6 +797,192 @@ class _KitchenPageState extends State<KitchenPage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Product list for 86ing, loaded on demand rather than kept in the
+/// kitchen page's state - the board polls constantly and doesn't otherwise
+/// need the catalogue.
+class _EightySixDialog extends StatefulWidget {
+  final AuthController auth;
+  final int storeId;
+
+  const _EightySixDialog({required this.auth, required this.storeId});
+
+  @override
+  State<_EightySixDialog> createState() => _EightySixDialogState();
+}
+
+class _EightySixDialogState extends State<_EightySixDialog> {
+  List<Map<String, dynamic>> _products = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      // The authenticated listing, not the public one - the public menu
+      // hides 86'd items, and those are exactly the ones needing a restore
+      // button here.
+      final response = await widget.auth.authorizedRequest(
+        'GET',
+        '/products/store/${widget.storeId}',
+      );
+
+      if (response.statusCode != 200) {
+        setState(() {
+          _error = 'Failed to load the menu.';
+          _loading = false;
+        });
+        return;
+      }
+
+      final decoded = jsonDecode(response.body);
+      final loaded = decoded is Map && decoded['products'] is List
+          ? List<Map<String, dynamic>>.from(
+              (decoded['products'] as List)
+                  .whereType<Map>()
+                  .map((item) => Map<String, dynamic>.from(item)),
+            )
+          : <Map<String, dynamic>>[];
+
+      if (!mounted) return;
+
+      setState(() {
+        _products = loaded;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Network error loading the menu.';
+        _loading = false;
+      });
+    }
+  }
+
+  bool _isEightySixed(Map<String, dynamic> product) {
+    final until = product['unavailable_until']?.toString();
+    if (until == null || until.isEmpty) return false;
+
+    final parsed = DateTime.tryParse(until);
+    return parsed != null && parsed.isAfter(DateTime.now());
+  }
+
+  Future<void> _setAvailable(int productId, bool available) async {
+    try {
+      final response = await widget.auth.authorizedRequest(
+        'PATCH',
+        '/products/$productId/availability',
+        body: {'available': available},
+      );
+
+      if (response.statusCode != 200) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to update that item.')),
+        );
+        return;
+      }
+
+      await _load();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Network error updating that item.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Sold out (86)'),
+      content: SizedBox(
+        width: 480,
+        height: 420,
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+                ? Center(child: Text(_error!))
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Marking an item sold out hides it from the menu '
+                        'straight away. It comes back automatically at the '
+                        'end of the day.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF625D5A),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Expanded(
+                        child: ListView.builder(
+                          itemCount: _products.length,
+                          itemBuilder: (context, index) {
+                            final product = _products[index];
+                            final productId =
+                                int.tryParse(product['id'].toString());
+                            final off = _isEightySixed(product);
+
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(
+                                product['name']?.toString() ?? 'Item',
+                                style: TextStyle(
+                                  decoration:
+                                      off ? TextDecoration.lineThrough : null,
+                                  color: off ? Colors.grey : null,
+                                ),
+                              ),
+                              subtitle: off
+                                  ? const Text(
+                                      'Sold out for today',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.redAccent,
+                                      ),
+                                    )
+                                  : null,
+                              trailing: productId == null
+                                  ? null
+                                  : off
+                                      ? TextButton(
+                                          onPressed: () =>
+                                              _setAvailable(productId, true),
+                                          child: const Text('Restore'),
+                                        )
+                                      : OutlinedButton(
+                                          onPressed: () =>
+                                              _setAvailable(productId, false),
+                                          child: const Text('86'),
+                                        ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
     );
   }
 }

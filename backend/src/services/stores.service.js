@@ -1,4 +1,5 @@
 const storesRepository = require('../repositories/stores.repository');
+const storeHoursService = require('./store-hours.service');
 
 class StoreValidationError extends Error {
   constructor(message) {
@@ -44,7 +45,90 @@ async function listStores(user) {
 }
 
 async function listPublicStores() {
-  return storesRepository.findPublicStores();
+  const stores = await storesRepository.findPublicStores();
+
+  // Customers need to see closed stores as closed, not discover it only
+  // when checkout is rejected.
+  return Promise.all(
+    stores.map(async (store) => {
+      const openState = await storeHoursService.getStoreOpenState(store);
+
+      return {
+        ...store,
+        is_open: openState.isOpen,
+        closed_reason: openState.reason,
+        today_hours: openState.todayHours ?? null,
+      };
+    })
+  );
+}
+
+async function getStoreHours(storeId) {
+  const [hours, closures] = await Promise.all([
+    storesRepository.findHoursForStore(storeId),
+    storesRepository.findClosuresForStore(storeId),
+  ]);
+
+  return { hours, closures };
+}
+
+function normalizeHoursInput(days) {
+  if (!Array.isArray(days)) {
+    throw new StoreValidationError('hours must be an array of days');
+  }
+
+  return days.map((day) => {
+    const dayOfWeek = Number(day.dayOfWeek);
+
+    if (!Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) {
+      throw new StoreValidationError(
+        'Each day needs a dayOfWeek between 0 (Sunday) and 6 (Saturday)'
+      );
+    }
+
+    const isClosed = Boolean(day.isClosed);
+    const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+    // A closed day still needs placeholder times for the NOT NULL columns;
+    // is_closed is what's actually consulted.
+    const openTime = isClosed ? '00:00' : String(day.openTime ?? '');
+    const closeTime = isClosed ? '00:00' : String(day.closeTime ?? '');
+
+    if (!isClosed && (!timePattern.test(openTime) || !timePattern.test(closeTime))) {
+      throw new StoreValidationError(
+        'Open and close times must be in HH:MM 24-hour format'
+      );
+    }
+
+    return { dayOfWeek, openTime, closeTime, isClosed };
+  });
+}
+
+async function replaceStoreHours(storeId, days) {
+  await storesRepository.replaceHoursForStore(
+    storeId,
+    normalizeHoursInput(days)
+  );
+
+  return getStoreHours(storeId);
+}
+
+async function addStoreClosure(storeId, { date, reason }) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date ?? ''))) {
+    throw new StoreValidationError('A closure needs a date in YYYY-MM-DD form');
+  }
+
+  await storesRepository.insertClosure(storeId, { date, reason });
+
+  return getStoreHours(storeId);
+}
+
+async function removeStoreClosure(storeId, date) {
+  const removed = await storesRepository.deleteClosure(storeId, date);
+
+  if (!removed) {
+    throw new StoreNotFoundError('No closure on that date');
+  }
 }
 
 async function getStore(storeId) {
@@ -89,6 +173,10 @@ module.exports = {
   createStore,
   listStores,
   listPublicStores,
+  getStoreHours,
+  replaceStoreHours,
+  addStoreClosure,
+  removeStoreClosure,
   getStore,
   updateStore,
   updateStoreStatus,

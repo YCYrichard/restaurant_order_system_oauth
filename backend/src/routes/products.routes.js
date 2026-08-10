@@ -41,4 +41,10 @@ router.patch(
   controller.updateProductStatus
 );
 
+router.patch(
+  '/:productId/availability',
+  requireAuth,
+  controller.updateProductAvailability
+);
+
 module.exports = router;

@@ -50,4 +50,32 @@ router.patch(
   controller.updateStoreStatus
 );
 
+router.get(
+  '/:storeId/hours',
+  requireAuth,
+  requireStoreAccess,
+  controller.getStoreHours
+);
+
+router.put(
+  '/:storeId/hours',
+  requireAuth,
+  requireStoreAccess,
+  controller.replaceStoreHours
+);
+
+router.post(
+  '/:storeId/closures',
+  requireAuth,
+  requireStoreAccess,
+  controller.addStoreClosure
+);
+
+router.delete(
+  '/:storeId/closures/:date',
+  requireAuth,
+  requireStoreAccess,
+  controller.removeStoreClosure
+);
+
 module.exports = router;
