@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../core/auth/auth_controller.dart';
 import '../core/events/event_stream_client.dart';
+import '../features/orders/widgets/receipt_dialog.dart';
 
 /// Customer-facing order history. Surfaces GET /orders/user/:userId, which
 /// has existed and been auth-protected for a while but was never called by
@@ -310,9 +311,26 @@ class _MyOrdersPageState extends State<MyOrdersPage> {
             ),
             if (createdAt != null) ...[
               const SizedBox(height: 6),
-              Text(
-                createdAt.split('T').first,
-                style: const TextStyle(fontSize: 12, color: Color(0xFF77716D)),
+              Row(
+                children: [
+                  Text(
+                    createdAt.split('T').first,
+                    style:
+                        const TextStyle(fontSize: 12, color: Color(0xFF77716D)),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () => showDialog<void>(
+                      context: context,
+                      builder: (_) => ReceiptDialog(
+                        auth: context.read<AuthController>(),
+                        orderId: int.parse('$orderId'),
+                      ),
+                    ),
+                    icon: const Icon(Icons.receipt_long, size: 16),
+                    label: const Text('Receipt'),
+                  ),
+                ],
               ),
             ],
             const SizedBox(height: 12),

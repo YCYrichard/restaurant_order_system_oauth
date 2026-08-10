@@ -26,4 +26,9 @@ router.get('/:orderId', requireAuth, controller.getOrderById);
 // requireStoreAccess to check.
 router.patch('/:orderId/status', requireAuth, controller.updateOrderStatus);
 
+// Receipt is readable by the ordering customer or the store's staff -
+// resolved in the service, since neither is expressible as middleware here.
+router.get('/:orderId/receipt', requireAuth, controller.getReceipt);
+router.post('/:orderId/refunds', requireAuth, controller.refundOrder);
+
 module.exports = router;

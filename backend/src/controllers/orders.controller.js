@@ -80,3 +80,25 @@ exports.getOrdersByStore = async (req, res, next) => {
     next(error);
   }
 };
+
+exports.getReceipt = async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    const receipt = await ordersService.getReceipt(orderId, req.user);
+
+    res.status(200).json(receipt);
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.refundOrder = async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    const receipt = await ordersService.refundOrder(orderId, req.user, req.body);
+
+    res.status(201).json(receipt);
+  } catch (error) {
+    next(error);
+  }
+};

@@ -181,14 +181,26 @@ async function findClosuresForStore(storeId) {
   return rows;
 }
 
-async function updateStore(storeId, { name, address, phone }) {
+async function updateStore(storeId, fields) {
+  const assignments = ['name = ?', 'address = ?', 'phone = ?'];
+  const params = [fields.name, fields.address || null, fields.phone || null];
+
+  // Only touch tax columns when the caller actually supplied them.
+  if (fields.taxRate !== undefined) {
+    assignments.push('tax_rate = ?');
+    params.push(fields.taxRate);
+  }
+
+  if (fields.taxInclusive !== undefined) {
+    assignments.push('tax_inclusive = ?');
+    params.push(fields.taxInclusive ? 1 : 0);
+  }
+
+  params.push(storeId);
+
   const [result] = await db.execute(
-    `
-      UPDATE stores
-      SET name = ?, address = ?, phone = ?
-      WHERE id = ?
-    `,
-    [name, address || null, phone || null, storeId]
+    `UPDATE stores SET ${assignments.join(', ')} WHERE id = ?`,
+    params
   );
 
   return result.affectedRows > 0;

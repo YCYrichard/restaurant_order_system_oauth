@@ -3,6 +3,7 @@ const ordersRepository = require('../repositories/orders.repository');
 const productsRepository = require('../repositories/products.repository');
 const storesRepository = require('../repositories/stores.repository');
 const storeHoursService = require('./store-hours.service');
+const taxService = require('./tax.service');
 const modifiersRepository = require('../repositories/modifiers.repository');
 const modifiersService = require('./modifiers.service');
 const couponsRepository = require('../repositories/coupons.repository');
@@ -306,11 +307,22 @@ async function createOrder(input) {
       }
     }
 
+    // Tax is computed on the post-discount figure - a discount reduces the
+    // taxable amount, it isn't applied after tax.
+    const taxed = taxService.computeTax(roundMoney(subtotal - discountAmount), {
+      taxRate: store.tax_rate,
+      taxInclusive: store.tax_inclusive,
+    });
+
     orderId = await ordersRepository.insertOrder(
       {
         userId,
         storeId,
-        total: roundMoney(subtotal - discountAmount),
+        total: taxed.total,
+        subtotal: taxed.subtotal,
+        taxAmount: taxed.taxAmount,
+        taxRate: taxed.taxRate,
+        taxInclusive: taxed.taxInclusive,
         discountAmount,
         couponCode: appliedCoupon ? appliedCoupon.code : null,
         customerName,
@@ -446,6 +458,82 @@ async function updateOrderStatus(orderId, user, status) {
   return updated;
 }
 
+/// Structured receipt for one order. Everything comes from the order's own
+/// snapshotted columns rather than live store/menu data, so a receipt
+/// reprinted months later shows what was actually charged.
+async function getReceipt(orderId, user) {
+  const order = await ordersRepository.findOrderWithItems(orderId);
+
+  if (!order) {
+    throw new OrderNotFoundError();
+  }
+
+  // A customer may read their own receipt; staff need store access.
+  const isOwnOrder = order.user_id != null && order.user_id === user?.id;
+
+  if (!isOwnOrder && user?.role !== 'admin') {
+    const hasAccess = user
+      ? await ordersRepository.hasStoreAccess(user.id, order.store_id)
+      : false;
+
+    if (!hasAccess) {
+      throw new OrderAccessDeniedError();
+    }
+  }
+
+  const refunds = await ordersRepository.findRefundsForOrder(orderId);
+  const refundedTotal = refunds.reduce(
+    (sum, refund) => sum + Number(refund.amount),
+    0
+  );
+
+  return {
+    order,
+    refunds,
+    totals: {
+      subtotal: Number(order.subtotal),
+      discount: Number(order.discount_amount),
+      tax: Number(order.tax_amount),
+      taxRate: Number(order.tax_rate),
+      taxInclusive: Boolean(order.tax_inclusive),
+      total: Number(order.total),
+      refunded: roundMoney(refundedTotal),
+      net: roundMoney(Number(order.total) - refundedTotal),
+    },
+  };
+}
+
+/// Records a refund against an order. This is a record only - no money
+/// moves, because no payment provider is wired up yet. Once one is, this is
+/// where the gateway call belongs.
+async function refundOrder(orderId, user, { amount, reason }) {
+  const order = await resolveOrderAccess(orderId, user);
+
+  const parsedAmount = Number(amount);
+
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    throw new OrderValidationError('A positive refund amount is required');
+  }
+
+  const alreadyRefunded = await ordersRepository.sumRefundsForOrder(orderId);
+  const remaining = roundMoney(Number(order.total) - alreadyRefunded);
+
+  if (parsedAmount > remaining + TOTAL_TOLERANCE) {
+    throw new OrderValidationError(
+      `Refund exceeds the remaining balance of ${remaining.toFixed(2)}`
+    );
+  }
+
+  await ordersRepository.insertRefund({
+    orderId,
+    amount: roundMoney(parsedAmount),
+    reason,
+    createdBy: user?.id ?? null,
+  });
+
+  return getReceipt(orderId, user);
+}
+
 async function listOrdersForStore(storeId, user, { activeOnly = false } = {}) {
   if (user.role !== 'admin') {
     const hasAccess = await ordersRepository.hasStoreAccess(
@@ -471,4 +559,6 @@ module.exports = {
   getOrderById,
   updateOrderStatus,
   listOrdersForStore,
+  getReceipt,
+  refundOrder,
 };

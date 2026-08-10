@@ -17,18 +17,38 @@ class StoreNotFoundError extends Error {
   }
 }
 
-function normalizeInput({ name, address, phone }) {
+function normalizeInput({ name, address, phone, taxRate, taxInclusive }) {
   const trimmedName = typeof name === 'string' ? name.trim() : '';
 
   if (!trimmedName) {
     throw new StoreValidationError('Store name is required');
   }
 
-  return {
+  const normalized = {
     name: trimmedName,
     address: typeof address === 'string' ? address.trim() || null : null,
     phone: typeof phone === 'string' ? phone.trim() || null : null,
   };
+
+  // Tax settings are optional on update - omitting them leaves the store's
+  // current configuration alone rather than silently zeroing the rate.
+  if (taxRate !== undefined) {
+    const rate = Number(taxRate);
+
+    if (!Number.isFinite(rate) || rate < 0 || rate >= 1) {
+      throw new StoreValidationError(
+        'taxRate must be a fraction between 0 and 1 (e.g. 0.05 for 5%)'
+      );
+    }
+
+    normalized.taxRate = rate;
+  }
+
+  if (taxInclusive !== undefined) {
+    normalized.taxInclusive = taxInclusive === true || taxInclusive === 'true';
+  }
+
+  return normalized;
 }
 
 async function createStore(input) {

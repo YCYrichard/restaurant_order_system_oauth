@@ -34,6 +34,9 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
   late List<_DayRow> _days;
   List<Map<String, dynamic>> _closures = [];
 
+  final _taxRateController = TextEditingController(text: '0');
+  bool _taxInclusive = true;
+
   bool _loading = false;
   bool _saving = false;
   String? _message;
@@ -44,6 +47,12 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
     super.initState();
     _days = List.generate(7, (index) => _DayRow(dayOfWeek: index));
     _load();
+  }
+
+  @override
+  void dispose() {
+    _taxRateController.dispose();
+    super.dispose();
   }
 
   @override
@@ -68,6 +77,12 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
   Future<void> _load() async {
     final storeId = widget.selectedStore?['id'];
     if (storeId == null) return;
+
+    // Tax comes from the store record already loaded by the admin page.
+    final rate = double.tryParse('${widget.selectedStore?['tax_rate'] ?? 0}') ?? 0;
+    _taxRateController.text = (rate * 100).toStringAsFixed(2);
+    _taxInclusive = widget.selectedStore?['tax_inclusive'] != 0 &&
+        widget.selectedStore?['tax_inclusive'] != false;
 
     setState(() => _loading = true);
 
@@ -162,6 +177,35 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
     } catch (error) {
       setState(() => _saving = false);
       _showMessage('Network error saving hours: $error', isError: true);
+    }
+  }
+
+  /// Tax lives on the store record, so it saves through the store update
+  /// endpoint rather than the hours one.
+  Future<void> _saveTax() async {
+    final store = widget.selectedStore;
+    if (store == null) return;
+
+    final percent = double.tryParse(_taxRateController.text.trim()) ?? 0;
+
+    final response = await _auth.authorizedRequest(
+      'PUT',
+      '/stores/${store['id']}',
+      body: {
+        'name': store['name'],
+        'address': store['address'],
+        'phone': store['phone'],
+        // The API takes a fraction; the field asks for a percentage because
+        // that's how a shop owner thinks about it.
+        'taxRate': percent / 100,
+        'taxInclusive': _taxInclusive,
+      },
+    );
+
+    if (response.statusCode == 200) {
+      _showMessage('Tax settings saved.');
+    } else {
+      _showMessage('Failed to save tax settings.', isError: true);
     }
   }
 
@@ -437,6 +481,53 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
                     ),
                   );
                 }),
+
+              const Divider(height: 32),
+              const Text(
+                'Tax',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Taiwan business tax is normally inclusive: the menu price '
+                'already contains the tax and the receipt breaks it out. '
+                'Exclusive adds it on top at checkout.',
+                style: TextStyle(fontSize: 12, color: Color(0xFF77716D)),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  SizedBox(
+                    width: 160,
+                    child: TextField(
+                      controller: _taxRateController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Rate % (e.g. 5)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: _taxInclusive,
+                      onChanged: (value) =>
+                          setState(() => _taxInclusive = value),
+                      title: Text(
+                        _taxInclusive
+                            ? 'Prices include tax'
+                            : 'Tax added at checkout',
+                      ),
+                    ),
+                  ),
+                  FilledButton(
+                    onPressed: _saveTax,
+                    child: const Text('Save tax'),
+                  ),
+                ],
+              ),
             ],
           ],
         ),

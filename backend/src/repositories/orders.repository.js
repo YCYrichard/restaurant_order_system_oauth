@@ -5,16 +5,21 @@ async function insertOrder(order, connection = db) {
   const [result] = await connection.execute(
     `
       INSERT INTO orders (
-        user_id, store_id, total, discount_amount, coupon_code,
+        user_id, store_id, total, subtotal, tax_amount, tax_rate,
+        tax_inclusive, discount_amount, coupon_code,
         customer_name, customer_phone, customer_email, notes,
         fulfillment_type, delivery_address, table_number
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       order.userId || null,
       order.storeId,
       order.total,
+      order.subtotal ?? order.total,
+      order.taxAmount || 0,
+      order.taxRate || 0,
+      order.taxInclusive === false ? 0 : 1,
       order.discountAmount || 0,
       order.couponCode || null,
       order.customerName,
@@ -218,8 +223,50 @@ async function findOrdersByUser(userId) {
   );
 }
 
+async function insertRefund(refund) {
+  const [result] = await db.execute(
+    `
+      INSERT INTO order_refunds (order_id, amount, reason, created_by)
+      VALUES (?, ?, ?, ?)
+    `,
+    [refund.orderId, refund.amount, refund.reason || null, refund.createdBy || null]
+  );
+
+  return result.insertId;
+}
+
+async function findRefundsForOrder(orderId) {
+  const [rows] = await db.execute(
+    `
+      SELECT id, amount, reason, created_by, created_at
+      FROM order_refunds
+      WHERE order_id = ?
+      ORDER BY created_at ASC
+    `,
+    [orderId]
+  );
+
+  return rows;
+}
+
+async function sumRefundsForOrder(orderId) {
+  const [rows] = await db.execute(
+    `
+      SELECT COALESCE(SUM(amount), 0) AS total
+      FROM order_refunds
+      WHERE order_id = ?
+    `,
+    [orderId]
+  );
+
+  return Number(rows[0].total);
+}
+
 module.exports = {
   insertOrder,
+  insertRefund,
+  findRefundsForOrder,
+  sumRefundsForOrder,
   insertOrderItems,
   findOrderWithItems,
   findOrdersByUser,

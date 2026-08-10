@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/auth/auth_controller.dart';
+import '../../orders/widgets/receipt_dialog.dart';
 
 /// Admin panel for viewing and progressing orders for the currently
 /// selected store. Previously orders were completely invisible to staff
@@ -356,6 +357,19 @@ class _OrdersPanelState extends State<OrdersPanel> {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
+                if (orderId != null)
+                  TextButton.icon(
+                    onPressed: () => showDialog<void>(
+                      context: context,
+                      builder: (_) => ReceiptDialog(
+                        auth: _auth,
+                        orderId: orderId,
+                        allowRefund: true,
+                      ),
+                    ),
+                    icon: const Icon(Icons.receipt_long, size: 16),
+                    label: const Text('Receipt'),
+                  ),
                 if (!isTerminal) ...[
                   TextButton(
                     onPressed: orderId == null
