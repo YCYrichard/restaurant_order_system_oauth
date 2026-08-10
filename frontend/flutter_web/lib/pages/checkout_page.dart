@@ -123,7 +123,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
     double total = 0;
     for (final line in lines) {
       final product = _products.firstWhere((p) => p.id == line.productId);
-      total += product.price * line.quantity;
+      final unit = line.unitPrice > 0 ? line.unitPrice : product.price;
+      total += unit * line.quantity;
     }
     return total;
   }
@@ -149,11 +150,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
     final items = lines.map((line) {
       final product = _products.firstWhere((p) => p.id == line.productId);
+      final unit = line.unitPrice > 0 ? line.unitPrice : product.price;
+
       return {
         'productId': product.id,
         'quantity': line.quantity,
-        'price': product.price,
+        // Sent for the server's stale-cart comparison only; it prices the
+        // line itself from the product and the chosen options.
+        'price': unit,
         'notes': line.notes,
+        'modifierOptionIds': line.modifierOptionIds,
       };
     }).toList();
 
@@ -568,7 +574,8 @@ class _OrderSummary extends StatelessWidget {
           ...lines.map((line) {
             final product =
                 products.firstWhere((p) => p.id == line.productId);
-            final lineTotal = product.price * line.quantity;
+            final unit = line.unitPrice > 0 ? line.unitPrice : product.price;
+            final lineTotal = unit * line.quantity;
 
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),

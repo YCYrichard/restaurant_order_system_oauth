@@ -723,6 +723,9 @@ class _KitchenPageState extends State<KitchenPage> {
             const SizedBox(height: 10),
             ...items.map((item) {
               final notes = item['notes']?.toString();
+              final mods = item['modifiers'] is List
+                  ? List.from(item['modifiers'])
+                  : const [];
 
               return Padding(
                 padding: const EdgeInsets.only(bottom: 6),
@@ -735,6 +738,21 @@ class _KitchenPageState extends State<KitchenPage> {
                         color: Colors.white,
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    // Chosen options matter as much as notes for getting the
+                    // plate right, so they read the same way.
+                    ...mods.map(
+                      (m) => Padding(
+                        padding: const EdgeInsets.only(left: 12, top: 2),
+                        child: Text(
+                          '• ${m['group_name']}: ${m['option_name']}',
+                          style: const TextStyle(
+                            color: Colors.lightBlueAccent,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
                     ),
                     if (notes != null && notes.isNotEmpty)

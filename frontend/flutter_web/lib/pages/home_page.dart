@@ -13,6 +13,7 @@ import '../features/cart/cart_controller.dart';
 import '../features/cart/widgets/cart_summary_section.dart';
 import '../features/menu/data/menu_repository.dart';
 import '../features/menu/widgets/menu_products_section.dart';
+import '../features/menu/widgets/option_picker_sheet.dart';
 import '../features/store/widgets/store_selector_section.dart';
 import '../models/product.dart';
 import 'home/widgets/footer_section.dart';
@@ -165,12 +166,32 @@ class _HomePageState extends State<HomePage> {
     web.window.location.href = url;
   }
 
-  void _addToCart(Product product) {
-    context.read<CartController>().add(product);
+  Future<void> _addToCart(Product product) async {
+    var chosen = const <ModifierOption>[];
+
+    // Products with options go through the picker; plain ones stay a
+    // single tap.
+    if (product.hasModifiers) {
+      final result = await showDialog<List<ModifierOption>>(
+        context: context,
+        builder: (dialogContext) => OptionPickerSheet(product: product),
+      );
+
+      if (result == null) return; // cancelled
+      chosen = result;
+    }
+
+    if (!mounted) return;
+
+    context.read<CartController>().add(product, options: chosen);
+
+    final label = chosen.isEmpty
+        ? product.name
+        : '${product.name} (${chosen.map((o) => o.name).join(', ')})';
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('${product.name} added to cart'),
+        content: Text('$label added to cart'),
         duration: const Duration(seconds: 1),
       ),
     );

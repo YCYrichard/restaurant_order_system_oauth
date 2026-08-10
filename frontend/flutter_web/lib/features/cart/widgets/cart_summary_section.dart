@@ -124,7 +124,10 @@ class CartSummarySection extends StatelessWidget {
                 const SizedBox(height: 18),
                 ...lines.map((line) {
                   final product = getProductById(line.productId);
-                  final lineTotal = product.price * line.quantity;
+                  // Unit price includes any modifier upcharges.
+                  final unit =
+                      line.unitPrice > 0 ? line.unitPrice : product.price;
+                  final lineTotal = unit * line.quantity;
 
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 12),
@@ -163,11 +166,20 @@ class CartSummarySection extends StatelessWidget {
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
-                                        '\$${product.price.toStringAsFixed(2)} each',
+                                        '\$${unit.toStringAsFixed(2)} each',
                                         style: const TextStyle(
                                           color: Color(0xFF625D5A),
                                         ),
                                       ),
+                                      if (line.modifierLabel != null)
+                                        Text(
+                                          line.modifierLabel!,
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.deepOrange,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
                                     ],
                                   ),
                                 ),

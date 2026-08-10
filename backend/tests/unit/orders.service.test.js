@@ -4,6 +4,7 @@ jest.mock('../../src/config/db', () => ({
 }));
 jest.mock('../../src/repositories/orders.repository');
 jest.mock('../../src/repositories/products.repository');
+jest.mock('../../src/repositories/modifiers.repository');
 jest.mock('../../src/repositories/stores.repository');
 jest.mock('../../src/services/store-hours.service');
 jest.mock('../../src/repositories/coupons.repository');
@@ -16,6 +17,7 @@ jest.mock('../../src/services/coupons.service', () => {
 const db = require('../../src/config/db');
 const ordersRepository = require('../../src/repositories/orders.repository');
 const productsRepository = require('../../src/repositories/products.repository');
+const modifiersRepository = require('../../src/repositories/modifiers.repository');
 const storesRepository = require('../../src/repositories/stores.repository');
 const storeHoursService = require('../../src/services/store-hours.service');
 const couponsRepository = require('../../src/repositories/coupons.repository');
@@ -50,6 +52,12 @@ function mockCatalog(overrides = {}) {
     isOpen: true,
     reason: null,
   });
+
+  // No modifier groups by default; the modifier-specific behaviour has its
+  // own suite in modifiers.service.test.js.
+  modifiersRepository.findGroupsForProducts.mockResolvedValue([]);
+  modifiersRepository.groupRowsByProduct.mockReturnValue(new Map());
+  modifiersRepository.insertOrderItemModifiers.mockResolvedValue(undefined);
 }
 
 describe('orders.service.createOrder', () => {
@@ -104,7 +112,7 @@ describe('orders.service.createOrder', () => {
 
   test('prices the order from the store, ignoring what the client sent', async () => {
     ordersRepository.insertOrder.mockResolvedValue(42);
-    ordersRepository.insertOrderItems.mockResolvedValue(undefined);
+    ordersRepository.insertOrderItems.mockResolvedValue([1001]);
     ordersRepository.findOrderWithItems.mockResolvedValue({ id: 42 });
 
     // Client claims a lower unit price but a total matching the real one.
@@ -181,7 +189,7 @@ describe('orders.service.createOrder', () => {
 
   test('commits the transaction and returns the created order on success', async () => {
     ordersRepository.insertOrder.mockResolvedValue(42);
-    ordersRepository.insertOrderItems.mockResolvedValue(undefined);
+    ordersRepository.insertOrderItems.mockResolvedValue([1001]);
     ordersRepository.findOrderWithItems.mockResolvedValue({ id: 42, items: [] });
 
     const result = await ordersService.createOrder(validInput);
@@ -193,7 +201,7 @@ describe('orders.service.createOrder', () => {
     );
     expect(ordersRepository.insertOrderItems).toHaveBeenCalledWith(
       42,
-      validInput.items,
+      [expect.objectContaining({ productId: 1, quantity: 2, price: 10 })],
       mockConnection
     );
     expect(mockConnection.commit).toHaveBeenCalled();
@@ -233,7 +241,7 @@ describe('orders.service.createOrder fulfillment + item notes', () => {
 
     db.getConnection.mockResolvedValue(mockConnection);
     ordersRepository.insertOrder.mockResolvedValue(42);
-    ordersRepository.insertOrderItems.mockResolvedValue(undefined);
+    ordersRepository.insertOrderItems.mockResolvedValue([1001]);
     ordersRepository.findOrderWithItems.mockResolvedValue({ id: 42 });
   });
 
@@ -336,7 +344,7 @@ describe('orders.service.createOrder fulfillment + item notes', () => {
 
     expect(ordersRepository.insertOrderItems).toHaveBeenCalledWith(
       42,
-      items,
+      [expect.objectContaining({ productId: 1, notes: 'No onions' })],
       mockConnection
     );
   });
@@ -358,7 +366,7 @@ describe('orders.service.createOrder coupon handling', () => {
 
     db.getConnection.mockResolvedValue(mockConnection);
     ordersRepository.insertOrder.mockResolvedValue(42);
-    ordersRepository.insertOrderItems.mockResolvedValue(undefined);
+    ordersRepository.insertOrderItems.mockResolvedValue([1001]);
     ordersRepository.findOrderWithItems.mockResolvedValue({ id: 42 });
     couponsRepository.incrementRedemptionCount.mockResolvedValue(true);
     couponsRepository.insertRedemption.mockResolvedValue(undefined);

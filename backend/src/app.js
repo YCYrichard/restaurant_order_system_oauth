@@ -14,6 +14,7 @@ const categoriesRoutes = require('./routes/categories.routes');
 const usersRoutes = require('./routes/users.routes');
 const couponsRoutes = require('./routes/coupons.routes');
 const eventsRoutes = require('./routes/events.routes');
+const modifiersRoutes = require('./routes/modifiers.routes');
 const requestId = require('./middleware/requestId.middleware');
 const { notFoundHandler, errorHandler } = require('./middleware/error.middleware');
 
@@ -67,6 +68,7 @@ app.use('/categories', categoriesRoutes);
 app.use('/api/v1/users', usersRoutes);
 app.use('/api/v1/coupons', couponsRoutes);
 app.use('/events', eventsRoutes);
+app.use('/modifiers', modifiersRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

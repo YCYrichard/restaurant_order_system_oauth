@@ -3,6 +3,8 @@ const ordersRepository = require('../repositories/orders.repository');
 const productsRepository = require('../repositories/products.repository');
 const storesRepository = require('../repositories/stores.repository');
 const storeHoursService = require('./store-hours.service');
+const modifiersRepository = require('../repositories/modifiers.repository');
+const modifiersService = require('./modifiers.service');
 const couponsRepository = require('../repositories/coupons.repository');
 const couponsService = require('./coupons.service');
 const eventsService = require('./events.service');
@@ -177,6 +179,12 @@ async function resolvePricedItems(storeId, items) {
     products.map((product) => [Number(product.id), product])
   );
 
+  // Modifier definitions for every product in the cart, fetched once.
+  const modifierRows = await modifiersRepository.findGroupsForProducts(
+    productIds
+  );
+  const groupsByProduct = modifiersRepository.groupRowsByProduct(modifierRows);
+
   return items.map((item) => {
     const product = productsById.get(Number(item.productId));
 
@@ -200,11 +208,19 @@ async function resolvePricedItems(storeId, items) {
       );
     }
 
+    // Option ids only from the client; every price delta is looked up.
+    const { modifiers, priceDelta } = modifiersService.resolveLineModifiers(
+      product,
+      item.modifierOptionIds,
+      groupsByProduct.get(Number(product.id))
+    );
+
     return {
       productId: Number(product.id),
       quantity: Number(item.quantity),
-      price: Number(product.price),
+      price: roundMoney(Number(product.price) + priceDelta),
       notes: item.notes,
+      modifiers,
     };
   });
 }
@@ -311,7 +327,25 @@ async function createOrder(input) {
     );
 
     // pricedItems, not items - what's persisted must be the store's prices.
-    await ordersRepository.insertOrderItems(orderId, pricedItems, connection);
+    const orderItemIds = await ordersRepository.insertOrderItems(
+      orderId,
+      pricedItems,
+      connection
+    );
+
+    // Snapshot each line's chosen options, so a later edit to a modifier
+    // can't rewrite what this customer ordered or was charged.
+    for (let index = 0; index < pricedItems.length; index += 1) {
+      const lineModifiers = pricedItems[index].modifiers ?? [];
+
+      if (lineModifiers.length > 0) {
+        await modifiersRepository.insertOrderItemModifiers(
+          orderItemIds[index],
+          lineModifiers,
+          connection
+        );
+      }
+    }
 
     if (appliedCoupon) {
       await couponsRepository.insertRedemption(

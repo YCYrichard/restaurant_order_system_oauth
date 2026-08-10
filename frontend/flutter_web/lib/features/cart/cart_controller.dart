@@ -14,11 +14,24 @@ class CartLine {
   final int quantity;
   final String? notes;
 
+  /// Chosen modifier option ids. Only ids travel to the server, which looks
+  /// up the real price deltas - the same rule as base prices.
+  final List<int> modifierOptionIds;
+
+  /// Human-readable summary ("Size: Large") and the unit price including
+  /// deltas, both captured when the line was added. These are for display
+  /// only; the server recomputes the authoritative figures at checkout.
+  final String? modifierLabel;
+  final double unitPrice;
+
   const CartLine({
     required this.id,
     required this.productId,
     required this.quantity,
+    required this.unitPrice,
     this.notes,
+    this.modifierOptionIds = const [],
+    this.modifierLabel,
   });
 
   CartLine copyWith({int? quantity, String? notes, bool clearNotes = false}) {
@@ -26,7 +39,10 @@ class CartLine {
       id: id,
       productId: productId,
       quantity: quantity ?? this.quantity,
+      unitPrice: unitPrice,
       notes: clearNotes ? null : (notes ?? this.notes),
+      modifierOptionIds: modifierOptionIds,
+      modifierLabel: modifierLabel,
     );
   }
 
@@ -35,6 +51,9 @@ class CartLine {
         'productId': productId,
         'quantity': quantity,
         'notes': notes,
+        'unitPrice': unitPrice,
+        'modifierOptionIds': modifierOptionIds,
+        'modifierLabel': modifierLabel,
       };
 
   static CartLine? fromJson(Map<dynamic, dynamic> json) {
@@ -47,12 +66,19 @@ class CartLine {
     }
 
     final notes = json['notes']?.toString();
+    final rawIds = json['modifierOptionIds'];
+    final label = json['modifierLabel']?.toString();
 
     return CartLine(
       id: id,
       productId: productId,
       quantity: quantity,
+      unitPrice: double.tryParse(json['unitPrice'].toString()) ?? 0,
       notes: notes == null || notes.isEmpty ? null : notes,
+      modifierOptionIds: rawIds is List
+          ? rawIds.map((v) => int.tryParse(v.toString())).whereType<int>().toList()
+          : const [],
+      modifierLabel: label == null || label.isEmpty ? null : label,
     );
   }
 }
@@ -127,17 +153,36 @@ class CartController extends ChangeNotifier {
   int _indexOfLine(int lineId) =>
       _lines.indexWhere((line) => line.id == lineId);
 
-  /// Adds one of [product]. Merges into an existing note-free line for the
-  /// same product so repeated taps bump quantity rather than stacking
-  /// duplicate rows; lines that carry notes are left alone.
-  void add(Product product) {
+  /// Adds one of [product] with the given option choices.
+  ///
+  /// Merges into an existing line only when the notes AND the option
+  /// selection both match - "large, no onions" is a different line from
+  /// "regular", so bumping quantity across them would be wrong.
+  void add(Product product, {List<ModifierOption> options = const []}) {
+    final optionIds = options.map((o) => o.id).toList()..sort();
+    final unitPrice = product.price +
+        options.fold<double>(0, (sum, option) => sum + option.priceDelta);
+    final label = options.isEmpty
+        ? null
+        : options.map((o) => o.name).join(', ');
+
     final existingIndex = _lines.indexWhere(
-      (line) => line.productId == product.id && line.notes == null,
+      (line) =>
+          line.productId == product.id &&
+          line.notes == null &&
+          _sameSelection(line.modifierOptionIds, optionIds),
     );
 
     if (existingIndex == -1) {
       _lines.add(
-        CartLine(id: _nextLineId++, productId: product.id, quantity: 1),
+        CartLine(
+          id: _nextLineId++,
+          productId: product.id,
+          quantity: 1,
+          unitPrice: unitPrice,
+          modifierOptionIds: optionIds,
+          modifierLabel: label,
+        ),
       );
     } else {
       final existing = _lines[existingIndex];
@@ -147,6 +192,14 @@ class CartController extends ChangeNotifier {
 
     _persist();
     notifyListeners();
+  }
+
+  bool _sameSelection(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   void increase(int lineId) {
@@ -217,11 +270,17 @@ class CartController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Uses each line's captured unit price so modifier upcharges are
+  /// included. Falls back to the catalogue price for lines saved before
+  /// unit prices were stored.
   double subtotal(Product Function(int productId) getProductById) {
     double total = 0;
 
     for (final line in _lines) {
-      total += getProductById(line.productId).price * line.quantity;
+      final unit = line.unitPrice > 0
+          ? line.unitPrice
+          : getProductById(line.productId).price;
+      total += unit * line.quantity;
     }
 
     return total;

@@ -340,6 +340,7 @@ class _OrdersPanelState extends State<OrdersPanel> {
                 padding: const EdgeInsets.only(bottom: 2),
                 child: Text(
                   '${item['product_name']} x${item['quantity']}'
+                  '${item['modifiers'] is List && (item['modifiers'] as List).isNotEmpty ? '  ·  ${(item['modifiers'] as List).map((m) => m['option_name']).join(', ')}' : ''}'
                   '${item['notes'] != null ? '  ·  ${item['notes']}' : ''}',
                   style: TextStyle(
                     fontSize: 12,

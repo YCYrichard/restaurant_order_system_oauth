@@ -323,7 +323,8 @@ class _MyOrdersPageState extends State<MyOrdersPage> {
                   children: [
                     Expanded(
                       child: Text(
-                        '${item['product_name']} x${item['quantity']}',
+                        '${item['product_name']} x${item['quantity']}'
+                        '${item['modifiers'] is List && (item['modifiers'] as List).isNotEmpty ? ' (${(item['modifiers'] as List).map((m) => m['option_name']).join(', ')})' : ''}',
                         style: const TextStyle(color: Color(0xFF625D5A)),
                       ),
                     ),

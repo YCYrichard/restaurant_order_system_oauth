@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const modifiersRepository = require('../repositories/modifiers.repository');
 
 // Update/status are addressed by productId alone (no storeId in the URL),
 // so resolve the owning store here and verify access explicitly - the
@@ -110,9 +111,26 @@ exports.listPublicProductsByStore = async (req, res) => {
       [storeId]
     );
 
-    return res.status(200).json({
-      products: rows,
-    });
+    // Attach each product's modifier groups so the customer can choose
+    // options without a second round trip per item.
+    const modifierRows = await modifiersRepository.findGroupsForProducts(
+      rows.map((row) => row.id)
+    );
+    const groupsByProduct = modifiersRepository.groupRowsByProduct(modifierRows);
+
+    const products = rows.map((row) => ({
+      ...row,
+      modifier_groups: [...(groupsByProduct.get(row.id)?.values() ?? [])].map(
+        (group) => ({
+          ...group,
+          // Hide options the store has switched off, but keep the group so
+          // its min/max rules still make sense to the picker.
+          options: group.options.filter((option) => option.is_active),
+        })
+      ),
+    }));
+
+    return res.status(200).json({ products });
   } catch (error) {
     console.error('List public products error:', error);
 

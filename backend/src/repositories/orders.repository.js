@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const modifiersRepository = require('./modifiers.repository');
 
 async function insertOrder(order, connection = db) {
   const [result] = await connection.execute(
@@ -29,25 +30,58 @@ async function insertOrder(order, connection = db) {
   return result.insertId;
 }
 
+/// Inserts one row at a time and returns the new ids in order.
+///
+/// A single multi-row INSERT only reports its first insertId, and relying on
+/// the rest being contiguous depends on innodb_autoinc_lock_mode - not
+/// something to bet per-line modifier rows on. Orders carry a handful of
+/// lines, so the extra round trips cost nothing.
 async function insertOrderItems(orderId, items, connection = db) {
-  const itemValues = items.map((item) => [
-    orderId,
-    item.productId,
-    item.quantity,
-    item.price,
-    item.notes || null,
-  ]);
+  const insertedIds = [];
 
-  const placeholders = itemValues.map(() => '(?, ?, ?, ?, ?)').join(', ');
-  const flatValues = itemValues.flat();
+  for (const item of items) {
+    const [result] = await connection.execute(
+      `
+        INSERT INTO order_items (order_id, product_id, quantity, price, notes)
+        VALUES (?, ?, ?, ?, ?)
+      `,
+      [
+        orderId,
+        item.productId,
+        item.quantity,
+        item.price,
+        item.notes || null,
+      ]
+    );
 
-  await connection.execute(
-    `
-      INSERT INTO order_items (order_id, product_id, quantity, price, notes)
-      VALUES ${placeholders}
-    `,
-    flatValues
+    insertedIds.push(result.insertId);
+  }
+
+  return insertedIds;
+}
+
+
+/// Attaches each line's chosen options. Read from the snapshot columns, not
+/// by joining live modifier tables - the order must keep showing what was
+/// actually ordered even after the menu changes.
+async function attachModifiers(items, connection = db) {
+  if (items.length === 0) return items;
+
+  const rows = await modifiersRepository.findModifiersForOrderItems(
+    items.map((item) => item.id),
+    connection
   );
+
+  return items.map((item) => ({
+    ...item,
+    modifiers: rows
+      .filter((row) => row.order_item_id === item.id)
+      .map((row) => ({
+        group_name: row.group_name,
+        option_name: row.option_name,
+        price_delta: row.price_delta,
+      })),
+  }));
 }
 
 async function findOrderWithItems(orderId, connection = db) {
@@ -75,7 +109,7 @@ async function findOrderWithItems(orderId, connection = db) {
     [orderId]
   );
 
-  return { ...orderRows[0], items };
+  return { ...orderRows[0], items: await attachModifiers(items, connection) };
 }
 
 async function findOrderById(orderId) {
@@ -150,7 +184,7 @@ async function findOrdersByStore(storeId, { activeOnly = false } = {}) {
         [order.id]
       );
 
-      return { ...order, items };
+      return { ...order, items: await attachModifiers(items) };
     })
   );
 }
@@ -179,7 +213,7 @@ async function findOrdersByUser(userId) {
         [order.id]
       );
 
-      return { ...order, items };
+      return { ...order, items: await attachModifiers(items) };
     })
   );
 }

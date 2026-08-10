@@ -148,11 +148,30 @@ class _ProductCard extends StatelessWidget {
         padding: const EdgeInsets.all(20),
         child: Row(
           children: [
-            CircleAvatar(
-              radius: 30,
-              backgroundColor: Colors.deepOrange.withValues(alpha: 0.10),
-              child: Icon(icon, color: Colors.deepOrange, size: 30),
-            ),
+            // Photo when the store has set one, category icon otherwise -
+            // menus without images convert noticeably worse.
+            if (product.imageUrl != null)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: Image.network(
+                  product.imageUrl!,
+                  width: 60,
+                  height: 60,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => CircleAvatar(
+                    radius: 30,
+                    backgroundColor:
+                        Colors.deepOrange.withValues(alpha: 0.10),
+                    child: Icon(icon, color: Colors.deepOrange, size: 30),
+                  ),
+                ),
+              )
+            else
+              CircleAvatar(
+                radius: 30,
+                backgroundColor: Colors.deepOrange.withValues(alpha: 0.10),
+                child: Icon(icon, color: Colors.deepOrange, size: 30),
+              ),
             const SizedBox(width: 18),
             Expanded(
               child: Column(
@@ -181,7 +200,9 @@ class _ProductCard extends StatelessWidget {
                   Row(
                     children: [
                       Text(
-                        '\$${product.price.toStringAsFixed(2)}',
+                        product.hasModifiers
+                            ? 'from \$${product.price.toStringAsFixed(2)}'
+                            : '\$${product.price.toStringAsFixed(2)}',
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 18,
@@ -216,8 +237,12 @@ class _ProductCard extends StatelessWidget {
             const SizedBox(width: 12),
             FilledButton.icon(
               onPressed: () => onAddToCart(product),
-              icon: const Icon(Icons.add_shopping_cart),
-              label: const Text('Add'),
+              icon: Icon(
+                product.hasModifiers
+                    ? Icons.tune
+                    : Icons.add_shopping_cart,
+              ),
+              label: Text(product.hasModifiers ? 'Choose' : 'Add'),
             ),
           ],
         ),
