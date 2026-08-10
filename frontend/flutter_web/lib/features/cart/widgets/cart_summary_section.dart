@@ -73,7 +73,6 @@ class CartSummarySection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SectionContainer(
-      sectionId: 'cart-section',
       title: 'Cart summary',
       subtitle:
           'A good ordering flow keeps item count, subtotal, and quantity controls visible before checkout.',

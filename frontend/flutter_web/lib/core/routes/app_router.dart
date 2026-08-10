@@ -3,9 +3,12 @@ import 'package:go_router/go_router.dart';
 import '../../features/admin/admin_page.dart';
 import '../../features/auth/admin_login_page.dart';
 import '../../features/kitchen/kitchen_page.dart';
+import '../../pages/cart_page.dart';
 import '../../pages/checkout_page.dart';
 import '../../pages/home_page.dart';
+import '../../pages/login_page.dart';
 import '../../pages/my_orders_page.dart';
+import '../../pages/root_redirect_page.dart';
 import '../auth/auth_controller.dart';
 import 'auth_callback_page.dart';
 
@@ -33,11 +36,22 @@ GoRouter buildAppRouter(AuthController authController) {
         return '/admin/login';
       }
 
-      // There's no standalone customer login page - SocialLoginSection lives
-      // inside HomePage - so send signed-out visitors there rather than to a
-      // dedicated login route.
       if (location == '/my-orders' && !authController.isLoggedIn) {
-        return '/';
+        return '/login?next=${Uri.encodeComponent(state.uri.toString())}';
+      }
+
+      // An account is required to order - checkout redirects to sign-in
+      // and carries the full checkout URL (storeId, table) through so
+      // login returns the customer exactly where they left off.
+      if (location == '/checkout' && !authController.isLoggedIn) {
+        return '/login?next=${Uri.encodeComponent(state.uri.toString())}';
+      }
+
+      // Nothing to do on /login once already signed in - bounce onward to
+      // wherever the customer was headed (or home if there's nowhere to go).
+      if (location == '/login' && authController.isLoggedIn) {
+        final next = state.uri.queryParameters['next'];
+        return next != null && next.isNotEmpty ? next : '/';
       }
 
       // Kitchen staff sign in through the same local-login screen as
@@ -46,20 +60,22 @@ GoRouter buildAppRouter(AuthController authController) {
         return '/admin/login';
       }
 
-      if ((location == '/admin/login' || location == '/') &&
-          isAuthenticatedAdmin) {
+      if (location == '/admin/login' && isAuthenticatedAdmin) {
         return '/admin';
       }
 
       return null;
     },
     routes: [
+      // Not a customer entry point - it resolves to the single active
+      // store (if there's exactly one) or explains that ordering happens
+      // through a restaurant-provided QR code or link.
       GoRoute(
         path: '/',
-        builder: (context, state) => const HomePage(),
+        builder: (context, state) => const RootRedirectPage(),
       ),
-      // Direct link to one store's menu, e.g. /store/1 - shareable, and the
-      // entry point QR table ordering builds on.
+      // The actual customer entry point, reached via a QR code or a direct
+      // link a restaurant hands out - not from any in-app picker.
       GoRoute(
         path: '/store/:storeId',
         builder: (context, state) {
@@ -70,12 +86,25 @@ GoRouter buildAppRouter(AuthController authController) {
               int.tryParse(state.uri.queryParameters['table'] ?? '');
 
           return HomePage(
-            initialStoreId: storeId,
+            storeId: storeId,
             tableNumber: tableNumber != null && tableNumber > 0
                 ? tableNumber
                 : null,
           );
         },
+      ),
+      GoRoute(
+        path: '/store/:storeId/cart',
+        builder: (context, state) {
+          final storeId = int.tryParse(state.pathParameters['storeId'] ?? '');
+          return CartPage(storeId: storeId);
+        },
+      ),
+      GoRoute(
+        path: '/login',
+        builder: (context, state) => LoginPage(
+          next: state.uri.queryParameters['next'],
+        ),
       ),
       GoRoute(
         path: '/checkout',
@@ -117,6 +146,7 @@ GoRouter buildAppRouter(AuthController authController) {
         path: '/auth-success',
         builder: (context, state) => AuthCallbackPage(
           token: state.uri.queryParameters['token'],
+          next: state.uri.queryParameters['next'],
         ),
       ),
       GoRoute(

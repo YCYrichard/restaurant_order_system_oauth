@@ -136,8 +136,12 @@ async function upsertUser({
   return createdRows[0];
 }
 
-function redirectToFrontend(token) {
-  return `${FRONTEND_URL}/#/auth-success?token=${encodeURIComponent(token)}`;
+function redirectToFrontend(token, next) {
+  const params = new URLSearchParams({ token });
+  if (next) {
+    params.set('next', next);
+  }
+  return `${FRONTEND_URL}/#/auth-success?${params.toString()}`;
 }
 
 function redirectToFrontendError(message) {
@@ -180,7 +184,7 @@ function getProfileAvatar(profile) {
 
 exports.googleLogin = async (req, res) => {
   try {
-    const authUrl = buildGoogleAuthUrl();
+    const authUrl = buildGoogleAuthUrl(req.query.next);
     return res.redirect(authUrl);
   } catch (error) {
     console.error('Google login error:', error);
@@ -206,8 +210,10 @@ exports.googleCallback = async (req, res) => {
       );
     }
 
+    let stateResult;
+
     try {
-      verifyOAuthState(state, 'google');
+      stateResult = verifyOAuthState(state, 'google');
     } catch (stateError) {
       console.error('Google OAuth state validation failed:', stateError);
       return res.redirect(
@@ -234,7 +240,7 @@ exports.googleCallback = async (req, res) => {
 
     const token = await issueSession(res, user, req);
 
-    return res.redirect(redirectToFrontend(token));
+    return res.redirect(redirectToFrontend(token, stateResult.next));
   } catch (error) {
     console.error('Google callback error:', error.response?.data || error);
     return res.redirect(
@@ -245,7 +251,7 @@ exports.googleCallback = async (req, res) => {
 
 exports.facebookLogin = async (req, res) => {
   try {
-    const authUrl = buildFacebookAuthUrl();
+    const authUrl = buildFacebookAuthUrl(req.query.next);
     return res.redirect(authUrl);
   } catch (error) {
     console.error('Facebook login error:', error);
@@ -271,8 +277,10 @@ exports.facebookCallback = async (req, res) => {
       );
     }
 
+    let stateResult;
+
     try {
-      verifyOAuthState(state, 'facebook');
+      stateResult = verifyOAuthState(state, 'facebook');
     } catch (stateError) {
       console.error('Facebook OAuth state validation failed:', stateError);
       return res.redirect(
@@ -299,7 +307,7 @@ exports.facebookCallback = async (req, res) => {
 
     const token = await issueSession(res, user, req);
 
-    return res.redirect(redirectToFrontend(token));
+    return res.redirect(redirectToFrontend(token, stateResult.next));
   } catch (error) {
     console.error('Facebook callback error:', error.response?.data || error);
     return res.redirect(
@@ -310,7 +318,7 @@ exports.facebookCallback = async (req, res) => {
 
 exports.lineLogin = async (req, res) => {
   try {
-    const authUrl = buildLineAuthUrl();
+    const authUrl = buildLineAuthUrl(req.query.next);
     return res.redirect(authUrl);
   } catch (error) {
     console.error('LINE login error:', error);
@@ -336,8 +344,10 @@ exports.lineCallback = async (req, res) => {
       );
     }
 
+    let stateResult;
+
     try {
-      verifyOAuthState(state, 'line');
+      stateResult = verifyOAuthState(state, 'line');
     } catch (stateError) {
       console.error('LINE OAuth state validation failed:', stateError);
       return res.redirect(
@@ -364,7 +374,7 @@ exports.lineCallback = async (req, res) => {
 
     const token = await issueSession(res, user, req);
 
-    return res.redirect(redirectToFrontend(token));
+    return res.redirect(redirectToFrontend(token, stateResult.next));
   } catch (error) {
     console.error('LINE callback error:', error.response?.data || error);
     return res.redirect(

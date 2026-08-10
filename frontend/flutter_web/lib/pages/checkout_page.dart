@@ -1,11 +1,9 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import '../core/api/api_client.dart';
 import '../core/auth/auth_controller.dart';
-import '../core/constants/app_config.dart';
 import '../core/payments/payment_config.dart';
 import '../core/payments/tappay_sdk.dart';
 import '../features/cart/cart_controller.dart';
@@ -17,8 +15,7 @@ class CheckoutPage extends StatefulWidget {
   final int storeId;
 
   /// Carried over from a scanned table QR code. When set, this is a
-  /// dine-in order for that table and the pickup/delivery choice doesn't
-  /// apply.
+  /// dine-in order for that table rather than pickup.
   final int? tableNumber;
 
   const CheckoutPage({
@@ -38,7 +35,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
   final _phoneController = TextEditingController();
   final _emailController = TextEditingController();
   final _notesController = TextEditingController();
-  final _addressController = TextEditingController();
   final _couponController = TextEditingController();
 
   bool _isSubmitting = false;
@@ -84,7 +80,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _phoneController.dispose();
     _emailController.dispose();
     _notesController.dispose();
-    _addressController.dispose();
     _couponController.dispose();
     super.dispose();
   }
@@ -172,7 +167,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
     // Read from context before the first await - context.read after an
     // await risks running against a disposed widget's context.
-    final userId = context.read<AuthController>().userId;
+    final auth = context.read<AuthController>();
     final storeId = widget.storeId;
 
     // Tokenise the card BEFORE creating the order - a bad card should fail
@@ -208,7 +203,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }).toList();
 
     final body = {
-      'userId': userId,
+      // No userId here - the server derives it from the auth token, so
+      // there's nothing for a client to send or inflate.
       'storeId': storeId,
       'items': items,
       'total': _subtotal(lines),
@@ -221,9 +217,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
           ? null
           : _notesController.text.trim(),
       'fulfillmentType': _fulfillmentType,
-      'deliveryAddress': _fulfillmentType == 'delivery'
-          ? _addressController.text.trim()
-          : null,
       'tableNumber':
           _fulfillmentType == 'dine_in' ? widget.tableNumber : null,
       // Only the code goes over the wire - the server resolves the actual
@@ -234,10 +227,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
     };
 
     try {
-      final response = await http.post(
-        Uri.parse('$apiBaseUrl/orders'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
+      final response = await auth.authorizedRequest(
+        'POST',
+        '/orders',
+        body: body,
       );
 
       if (response.statusCode == 201 || response.statusCode == 200) {
@@ -256,18 +249,25 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
         if (prime != null && newOrderId != null) {
           try {
-            await ApiClient.postJson('/orders/$newOrderId/payments', {
-              'provider': 'tappay',
-              'prime': prime,
-              'cardholder': {
-                'name': _nameController.text.trim(),
-                'phone': _phoneController.text.trim(),
-                'email': _emailController.text.trim(),
+            final paymentResponse = await auth.authorizedRequest(
+              'POST',
+              '/orders/$newOrderId/payments',
+              body: {
+                'provider': 'tappay',
+                'prime': prime,
+                'cardholder': {
+                  'name': _nameController.text.trim(),
+                  'phone': _phoneController.text.trim(),
+                  'email': _emailController.text.trim(),
+                },
               },
-            });
-          } on ApiException catch (error) {
-            paymentFailed = true;
-            paymentError = error.message;
+            );
+
+            if (paymentResponse.statusCode != 201) {
+              paymentFailed = true;
+              paymentError = _extractMessage(paymentResponse.body) ??
+                  'The payment failed.';
+            }
           } catch (_) {
             paymentFailed = true;
             paymentError = 'Could not reach the payment service.';
@@ -286,20 +286,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
         // Surface the server's own message where it's actionable (an
         // expired or invalid coupon, a missing address) instead of a
         // generic failure the customer can't do anything about.
-        String message = 'Failed to place order. Please try again.';
-
-        try {
-          final decoded = jsonDecode(response.body);
-          if (decoded is Map && decoded['message'] != null) {
-            message = decoded['message'].toString();
-          }
-        } catch (_) {
-          // Keep the generic message.
-        }
-
         setState(() {
           _isSubmitting = false;
-          _errorMessage = message;
+          _errorMessage =
+              _extractMessage(response.body) ??
+                  'Failed to place order. Please try again.';
         });
       }
     } catch (e) {
@@ -308,6 +299,18 @@ class _CheckoutPageState extends State<CheckoutPage> {
         _errorMessage = 'Network error: ${e.toString()}';
       });
     }
+  }
+
+  String? _extractMessage(String responseBody) {
+    try {
+      final decoded = jsonDecode(responseBody);
+      if (decoded is Map && decoded['message'] != null) {
+        return decoded['message'].toString();
+      }
+    } catch (_) {
+      // Not JSON, or no message field - caller falls back to a generic one.
+    }
+    return null;
   }
 
   @override
@@ -456,44 +459,31 @@ class _CheckoutPageState extends State<CheckoutPage> {
                         ),
                       ),
                     ] else ...[
-                      const Text(
-                        'How would you like your order?',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w800,
+                      // Only fulfillment option outside the table-QR flow -
+                      // nothing to choose, so no picker is shown.
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF5EF),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.storefront, color: Colors.deepOrange),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Pickup — we\'ll have it ready for you at the counter.',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 16),
-                      SegmentedButton<String>(
-                        segments: const [
-                          ButtonSegment(
-                            value: 'pickup',
-                            label: Text('Pickup'),
-                            icon: Icon(Icons.storefront),
-                          ),
-                          ButtonSegment(
-                            value: 'delivery',
-                            label: Text('Delivery'),
-                            icon: Icon(Icons.delivery_dining),
-                          ),
-                        ],
-                        selected: {_fulfillmentType},
-                        onSelectionChanged: (selection) {
-                          setState(() => _fulfillmentType = selection.first);
-                        },
-                      ),
-                      if (_fulfillmentType == 'delivery') ...[
-                        const SizedBox(height: 16),
-                        _ContactField(
-                          controller: _addressController,
-                          label: 'Delivery Address',
-                          icon: Icons.location_on,
-                          maxLines: 2,
-                          validator: (v) => (v == null || v.trim().isEmpty)
-                              ? 'Required for delivery'
-                              : null,
-                        ),
-                      ],
                     ],
                     const SizedBox(height: 28),
                     const Text(

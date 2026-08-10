@@ -32,21 +32,53 @@ const validOrderBody = {
 describe('POST /orders', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  test('creates an order without requiring auth (guest checkout)', async () => {
-    ordersService.createOrder.mockResolvedValue({ id: 1, items: [] });
-
+  test('rejects unauthenticated requests - an account is required to order', async () => {
     const res = await request(app).post('/orders').send(validOrderBody);
+
+    expect(res.status).toBe(401);
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+  });
+
+  test('creates an order for the authenticated caller', async () => {
+    ordersService.createOrder.mockResolvedValue({ id: 1, items: [] });
+    const token = tokenFor({ id: 7, role: 'customer' });
+
+    const res = await request(app)
+      .post('/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send(validOrderBody);
 
     expect(res.status).toBe(201);
     expect(res.body.order).toEqual({ id: 1, items: [] });
+    expect(ordersService.createOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ ...validOrderBody, userId: 7 })
+    );
+  });
+
+  test('ignores a client-supplied userId and uses the token instead', async () => {
+    ordersService.createOrder.mockResolvedValue({ id: 1, items: [] });
+    const token = tokenFor({ id: 7, role: 'customer' });
+
+    await request(app)
+      .post('/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ...validOrderBody, userId: 999 });
+
+    expect(ordersService.createOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 7 })
+    );
   });
 
   test('returns 400 with the stable error shape on validation failure', async () => {
     ordersService.createOrder.mockRejectedValue(
       new ordersService.OrderValidationError('Missing required fields')
     );
+    const token = tokenFor({ id: 7, role: 'customer' });
 
-    const res = await request(app).post('/orders').send({});
+    const res = await request(app)
+      .post('/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
 
     expect(res.status).toBe(400);
     expect(res.body).toMatchObject({
@@ -60,8 +92,12 @@ describe('POST /orders', () => {
     ordersService.createOrder.mockRejectedValue(
       new Error('ECONNREFUSED 127.0.0.1:3306')
     );
+    const token = tokenFor({ id: 7, role: 'customer' });
 
-    const res = await request(app).post('/orders').send(validOrderBody);
+    const res = await request(app)
+      .post('/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send(validOrderBody);
 
     expect(res.status).toBe(500);
     expect(res.body.message).toBe('Internal server error');

@@ -6,8 +6,13 @@ jest.mock('../../src/services/payments.service', () => ({
 }));
 
 const request = require('supertest');
+const jwt = require('jsonwebtoken');
 const app = require('../../src/app');
 const paymentsService = require('../../src/services/payments.service');
+
+function tokenFor(user) {
+  return jwt.sign(user, process.env.JWT_SECRET, { expiresIn: '1h' });
+}
 
 describe('GET /payments/config', () => {
   beforeEach(() => jest.clearAllMocks());
@@ -28,7 +33,16 @@ describe('GET /payments/config', () => {
 describe('POST /orders/:orderId/payments', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  test('charges a guest order without requiring auth', async () => {
+  test('rejects unauthenticated requests - paying requires an account', async () => {
+    const res = await request(app)
+      .post('/orders/5/payments')
+      .send({ provider: 'tappay', prime: 'prime_abc' });
+
+    expect(res.status).toBe(401);
+    expect(paymentsService.payOrder).not.toHaveBeenCalled();
+  });
+
+  test('charges an order for the authenticated caller', async () => {
     paymentsService.payOrder.mockResolvedValue({
       id: 1,
       provider: 'tappay',
@@ -36,15 +50,18 @@ describe('POST /orders/:orderId/payments', () => {
       amount: 20,
       currency: 'TWD',
     });
+    const token = tokenFor({ id: 7, role: 'customer' });
 
     const res = await request(app)
       .post('/orders/5/payments')
+      .set('Authorization', `Bearer ${token}`)
       .send({ provider: 'tappay', prime: 'prime_abc' });
 
     expect(res.status).toBe(201);
     expect(res.body.payment).toMatchObject({ status: 'paid' });
     expect(paymentsService.payOrder).toHaveBeenCalledWith(
       5,
+      expect.objectContaining({ id: 7, role: 'customer' }),
       expect.objectContaining({ provider: 'tappay', prime: 'prime_abc' })
     );
   });
@@ -57,9 +74,11 @@ describe('POST /orders/:orderId/payments', () => {
     paymentsService.payOrder.mockRejectedValue(
       new PaymentProviderError('Card is expired', { code: 'TAPPAY_10003' })
     );
+    const token = tokenFor({ id: 7, role: 'customer' });
 
     const res = await request(app)
       .post('/orders/5/payments')
+      .set('Authorization', `Bearer ${token}`)
       .send({ provider: 'tappay', prime: 'prime_abc' });
 
     expect(res.status).toBe(402);
@@ -67,5 +86,19 @@ describe('POST /orders/:orderId/payments', () => {
       code: 'TAPPAY_10003',
       message: 'Card is expired',
     });
+  });
+
+  test("surfaces a 403 when the caller doesn't own the order", async () => {
+    paymentsService.payOrder.mockRejectedValue(
+      new (jest.requireActual('../../src/services/payments.service').PaymentAccessDeniedError)()
+    );
+    const token = tokenFor({ id: 7, role: 'customer' });
+
+    const res = await request(app)
+      .post('/orders/5/payments')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ provider: 'manual' });
+
+    expect(res.status).toBe(403);
   });
 });

@@ -8,18 +8,20 @@ exports.getConfig = async (_req, res, next) => {
   }
 };
 
-// Unauthenticated, matching guest checkout: an order can be placed without
-// an account, so requiring one to pay for it would strand every guest. The
-// request carries no amount and returns no order detail, so knowing an order
-// id buys an attacker nothing beyond the ability to pay someone's bill with
-// their own card.
+// Requires auth: an account is required to order (see orders.routes.js),
+// and paying for an order requires being the customer who placed it or
+// staff at that store - enforced in payments.service.assertOrderAccess.
 exports.payOrder = async (req, res, next) => {
   try {
-    const payment = await paymentsService.payOrder(Number(req.params.orderId), {
-      provider: req.body.provider,
-      prime: req.body.prime,
-      cardholder: req.body.cardholder,
-    });
+    const payment = await paymentsService.payOrder(
+      Number(req.params.orderId),
+      req.user,
+      {
+        provider: req.body.provider,
+        prime: req.body.prime,
+        cardholder: req.body.cardholder,
+      }
+    );
 
     res.status(201).json({ payment });
   } catch (error) {

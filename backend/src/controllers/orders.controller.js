@@ -2,7 +2,12 @@ const ordersService = require('../services/orders.service');
 
 exports.createOrder = async (req, res, next) => {
   try {
-    const order = await ordersService.createOrder(req.body);
+    // userId always comes from the authenticated caller, never the body -
+    // otherwise any client could attribute an order to an arbitrary user id.
+    const order = await ordersService.createOrder({
+      ...req.body,
+      userId: req.user.id,
+    });
 
     res.status(201).json({
       message: 'Order created',

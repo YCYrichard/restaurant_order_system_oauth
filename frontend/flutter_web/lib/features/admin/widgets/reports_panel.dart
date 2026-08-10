@@ -243,7 +243,6 @@ class _ReportsPanelState extends State<ReportsPanel> {
           items: const [
             DropdownMenuItem(value: null, child: Text('All fulfillment types')),
             DropdownMenuItem(value: 'pickup', child: Text('Pickup')),
-            DropdownMenuItem(value: 'delivery', child: Text('Delivery')),
             DropdownMenuItem(value: 'dine_in', child: Text('Dine in')),
           ],
           onChanged: (value) {

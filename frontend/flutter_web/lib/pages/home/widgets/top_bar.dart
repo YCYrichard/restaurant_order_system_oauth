@@ -1,26 +1,23 @@
-// ignore_for_file: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 class TopBar extends StatelessWidget {
+  final String storeName;
   final bool isLoggedIn;
   final int cartItemCount;
-  final VoidCallback onMenuTap;
-  final VoidCallback onStoreTap;
-  final VoidCallback onLoginTap;
   final VoidCallback onCartTap;
   final VoidCallback onCheckoutTap;
+  final VoidCallback onLoginTap;
   final VoidCallback onLogoutTap;
 
   const TopBar({
     super.key,
+    required this.storeName,
     required this.isLoggedIn,
     required this.cartItemCount,
-    required this.onMenuTap,
-    required this.onStoreTap,
-    required this.onLoginTap,
     required this.onCartTap,
     required this.onCheckoutTap,
+    required this.onLoginTap,
     required this.onLogoutTap,
   });
 
@@ -43,21 +40,16 @@ class TopBar extends StatelessWidget {
             child: const Icon(Icons.restaurant_menu, color: Colors.white),
           ),
           const SizedBox(width: 12),
-          const Text(
-            'Orange Bistro',
-            style: TextStyle(fontWeight: FontWeight.w700),
+          Flexible(
+            child: Text(
+              storeName,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
           ),
         ],
       ),
       actions: [
-        TextButton(
-          onPressed: onMenuTap,
-          child: const Text('Menu'),
-        ),
-        TextButton(
-          onPressed: onStoreTap,
-          child: const Text('Store'),
-        ),
         TextButton(
           onPressed: onCheckoutTap,
           child: const Text('Checkout'),
@@ -109,10 +101,10 @@ class TopBar extends StatelessWidget {
                   icon: const Icon(Icons.logout),
                   label: const Text('Logout'),
                 )
-              : OutlinedButton.icon(
-                  onPressed: () => context.go('/admin/login'),
-                  icon: const Icon(Icons.admin_panel_settings),
-                  label: const Text('Staff Login'),
+              : FilledButton.icon(
+                  onPressed: onLoginTap,
+                  icon: const Icon(Icons.login),
+                  label: const Text('Sign In'),
                 ),
         ),
       ],

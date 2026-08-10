@@ -5,17 +5,23 @@ import 'package:provider/provider.dart';
 import '../auth/auth_controller.dart';
 
 /// Lands here after the backend's OAuth redirect
-/// (`#/auth-success?token=...` or `#/auth-error?message=...`). Applies the
-/// token to AuthController (if present) then bounces back to '/' - the
-/// router's own redirect logic takes it from there (e.g. to /admin for an
+/// (`#/auth-success?token=...&next=...` or `#/auth-error?message=...`).
+/// Applies the token to AuthController (if present) then returns to wherever
+/// the customer was headed before being sent to sign in - the login page
+/// passed that path through as `next`, and the backend round-tripped it
+/// through the OAuth provider inside the signed state token. Falls back to
+/// '/' when there's no next (e.g. sign-in wasn't triggered by a redirect),
+/// where the router's own redirect logic takes over (e.g. to /admin for an
 /// admin account).
 class AuthCallbackPage extends StatefulWidget {
   final String? token;
+  final String? next;
   final String? errorMessage;
 
   const AuthCallbackPage({
     super.key,
     this.token,
+    this.next,
     this.errorMessage,
   });
 
@@ -36,7 +42,8 @@ class _AuthCallbackPageState extends State<AuthCallbackPage> {
       }
 
       if (widget.errorMessage == null) {
-        context.go('/');
+        final next = widget.next;
+        context.go(next != null && next.isNotEmpty ? next : '/');
       }
     });
   }

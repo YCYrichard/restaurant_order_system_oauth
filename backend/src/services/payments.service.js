@@ -22,6 +22,14 @@ class PaymentValidationError extends Error {
   }
 }
 
+class PaymentAccessDeniedError extends Error {
+  constructor(message = 'You do not have access to this order') {
+    super(message);
+    this.status = 403;
+    this.code = 'FORBIDDEN';
+  }
+}
+
 function roundMoney(value) {
   return Math.round(value * 100) / 100;
 }
@@ -69,14 +77,39 @@ async function getPaymentsForOrder(orderId) {
   return paymentsRepository.findPaymentsForOrder(orderId);
 }
 
+// Not imported from orders.service - that module already requires this one
+// (for refunds), so importing back would be circular. Mirrors the ownership
+// check orders.service.resolveOrderAccess does for the same reason: an
+// order belongs to the customer who placed it, or to staff at that store.
+async function assertOrderAccess(order, user) {
+  if (order.user_id === user.id || user.role === 'admin') {
+    return;
+  }
+
+  const hasAccess = await ordersRepository.hasStoreAccess(
+    user.id,
+    order.store_id
+  );
+
+  if (!hasAccess) {
+    throw new PaymentAccessDeniedError();
+  }
+}
+
 /// Charges an order. The amount is read from the stored order, never from
 /// the request - the client supplies only a payment token.
-async function payOrder(orderId, { provider: requestedProvider, prime, cardholder }) {
+async function payOrder(
+  orderId,
+  user,
+  { provider: requestedProvider, prime, cardholder }
+) {
   const order = await ordersRepository.findOrderById(orderId);
 
   if (!order) {
     throw new PaymentValidationError('That order does not exist');
   }
+
+  await assertOrderAccess(order, user);
 
   if (order.payment_status === 'paid') {
     throw new PaymentValidationError('This order has already been paid');
@@ -189,6 +222,7 @@ async function refundPayment(orderId, amount) {
 
 module.exports = {
   PaymentValidationError,
+  PaymentAccessDeniedError,
   getClientConfig,
   getPaymentsForOrder,
   payOrder,

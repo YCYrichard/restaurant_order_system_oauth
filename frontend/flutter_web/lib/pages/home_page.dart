@@ -1,46 +1,38 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
-import 'package:web/web.dart' as web;
 
 import '../core/api/api_client.dart';
 import '../core/auth/auth_controller.dart';
-import '../core/constants/app_config.dart';
-import '../features/auth/widgets/social_login_section.dart';
 import '../features/cart/cart_controller.dart';
 import '../features/cart/widgets/cart_summary_section.dart';
 import '../features/menu/data/menu_repository.dart';
 import '../features/menu/widgets/menu_products_section.dart';
 import '../features/menu/widgets/option_picker_sheet.dart';
-import '../features/store/widgets/store_selector_section.dart';
 import '../models/product.dart';
-import 'home/widgets/footer_section.dart';
-import 'home/widgets/hero_section.dart';
-import 'home/widgets/order_steps_section.dart';
+import 'home/widgets/store_header_section.dart';
 import 'home/widgets/top_bar.dart';
 
+/// One store's ordering page - the customer's entry point, reached via that
+/// store's QR code or a direct link (never an in-app store picker; see
+/// RootRedirectPage).
 class HomePage extends StatefulWidget {
-  /// When set (via the /store/:storeId route), that store's menu is loaded
-  /// directly instead of defaulting to whichever store happens to come back
-  /// first from /stores/public - lets a store be linked to directly.
-  final int? initialStoreId;
+  final int? storeId;
 
   /// Set from /store/:storeId?table=N when a customer scans a table's QR
   /// code. Implies a dine-in order for that table.
   final int? tableNumber;
 
-  const HomePage({super.key, this.initialStoreId, this.tableNumber});
+  const HomePage({super.key, required this.storeId, this.tableNumber});
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> {
-  List<Map<String, dynamic>> stores = [];
-  int? selectedStoreId;
-  bool _loadingStores = false;
+  Map<String, dynamic>? _store;
+  bool _loadingStore = true;
+  String? _storeError;
 
   List<Product> products = [];
   bool _loadingMenu = false;
@@ -49,39 +41,34 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    _loadStore();
 
-    // Set before _loadStores so its "no store picked yet" default doesn't
-    // override the store named in the URL.
-    selectedStoreId = widget.initialStoreId;
-
-    _loadStores();
-
-    if (selectedStoreId != null) {
-      _loadMenu(selectedStoreId!);
+    if (widget.storeId != null) {
+      _loadMenu(widget.storeId!);
     }
   }
 
-  Future<void> _loadStores() async {
+  Future<void> _loadStore() async {
+    final storeId = widget.storeId;
+
+    if (storeId == null) {
+      setState(() {
+        _loadingStore = false;
+        _storeError = "This ordering link isn't valid.";
+      });
+      return;
+    }
+
     setState(() {
-      _loadingStores = true;
+      _loadingStore = true;
+      _storeError = null;
     });
 
     try {
-      final response = await http.get(
-        Uri.parse('$apiBaseUrl/stores/public'),
-        headers: {'Accept': 'application/json'},
-      );
-
-      if (response.statusCode != 200) {
-        setState(() {
-          _loadingStores = false;
-        });
-        return;
-      }
-
-      final decoded = jsonDecode(response.body);
-
-      final loadedStores = decoded is Map && decoded['stores'] is List
+      // The list endpoint (rather than a single-store one) is what already
+      // exists and already carries is_open/closed_reason/today_hours.
+      final decoded = await ApiClient.getJson('/stores/public');
+      final stores = decoded is Map && decoded['stores'] is List
           ? List<Map<String, dynamic>>.from(
               (decoded['stores'] as List)
                   .whereType<Map>()
@@ -89,32 +76,24 @@ class _HomePageState extends State<HomePage> {
             )
           : <Map<String, dynamic>>[];
 
-      // Only set when this call is what picked the store - if a store was
-      // already chosen (e.g. from /store/:storeId), initState has already
-      // kicked off its menu load and repeating it here would double-fetch.
-      int? newlySelectedStoreId;
+      final match = stores.firstWhere(
+        (store) => int.tryParse(store['id'].toString()) == storeId,
+        orElse: () => const <String, dynamic>{},
+      );
+
+      if (!mounted) return;
 
       setState(() {
-        stores = loadedStores;
-
-        if (selectedStoreId == null && loadedStores.isNotEmpty) {
-          newlySelectedStoreId =
-              int.tryParse(loadedStores.first['id'].toString());
-          selectedStoreId = newlySelectedStoreId;
-        }
-
-        _loadingStores = false;
+        _store = match.isEmpty ? null : match;
+        _storeError = match.isEmpty ? 'This restaurant is not available.' : null;
+        _loadingStore = false;
       });
-
-      if (newlySelectedStoreId != null) {
-        _loadMenu(newlySelectedStoreId!);
-      }
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _loadingStores = false;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _storeError = 'Unable to load this restaurant. Please try again.';
+        _loadingStore = false;
+      });
     }
   }
 
@@ -128,6 +107,21 @@ class _HomePageState extends State<HomePage> {
       final loadedProducts = await MenuRepository.fetchProducts(storeId);
 
       if (!mounted) return;
+
+      // The cart persists across visits (localStorage), so a customer who
+      // last ordered from a different store and then opens this one's QR
+      // code/link would otherwise carry cart lines this menu doesn't
+      // recognise - drop those rather than crashing on lookup.
+      final validIds = loadedProducts.map((p) => p.id).toSet();
+      final cart = context.read<CartController>();
+      final staleProductIds = cart.lines
+          .map((line) => line.productId)
+          .where((productId) => !validIds.contains(productId))
+          .toSet();
+
+      for (final productId in staleProductIds) {
+        cart.removeProduct(productId);
+      }
 
       setState(() {
         products = loadedProducts;
@@ -148,22 +142,6 @@ class _HomePageState extends State<HomePage> {
         _loadingMenu = false;
       });
     }
-  }
-
-  void _selectStore(int storeId) {
-    if (storeId == selectedStoreId) return;
-
-    setState(() {
-      selectedStoreId = storeId;
-    });
-
-    // Cart items reference product ids scoped to the previous store.
-    context.read<CartController>().clear();
-    _loadMenu(storeId);
-  }
-
-  void _open(String url) {
-    web.window.location.href = url;
   }
 
   Future<void> _addToCart(Product product) async {
@@ -222,29 +200,16 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    if (selectedStoreId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select a store before checking out.'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
+    if (widget.storeId == null) return;
 
     // Stop the customer at the cart rather than letting them fill in a whole
     // checkout form only to have the server reject it. The server check is
     // still the authority - this is just a courtesy.
-    final selectedStore = stores.firstWhere(
-      (store) => int.tryParse(store['id'].toString()) == selectedStoreId,
-      orElse: () => const <String, dynamic>{},
-    );
-
-    if (selectedStore['is_open'] == false) {
+    if (_store?['is_open'] == false) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            selectedStore['closed_reason']?.toString() ??
+            _store?['closed_reason']?.toString() ??
                 'This store is currently closed.',
           ),
           duration: const Duration(seconds: 3),
@@ -256,7 +221,11 @@ class _HomePageState extends State<HomePage> {
     final tableParam =
         widget.tableNumber != null ? '&table=${widget.tableNumber}' : '';
 
-    context.push('/checkout?storeId=$selectedStoreId$tableParam');
+    context.push('/checkout?storeId=${widget.storeId}$tableParam');
+  }
+
+  void _goToLogin() {
+    context.push('/login?next=${Uri.encodeComponent('/store/${widget.storeId}')}');
   }
 
   @override
@@ -264,42 +233,61 @@ class _HomePageState extends State<HomePage> {
     final auth = context.watch<AuthController>();
     final cart = context.watch<CartController>();
 
-    final isLoggedIn = auth.isLoggedIn;
-    final cartItemCount = cart.itemCount;
-    final cartSubtotal = cart.subtotal(getProductById);
+    if (_loadingStore) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_storeError != null || _store == null) {
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.storefront_outlined,
+                    size: 48, color: Colors.grey),
+                const SizedBox(height: 16),
+                Text(
+                  _storeError ?? 'This restaurant is not available.',
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final store = _store!;
 
     return Scaffold(
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(72),
         child: TopBar(
-          isLoggedIn: isLoggedIn,
-          cartItemCount: cartItemCount,
-          onLoginTap: () => _scrollToSection('login'),
-          onMenuTap: () => _scrollToSection('menu'),
-          onStoreTap: () => _scrollToSection('store'),
-          onCartTap: () => _scrollToSection('cart'),
+          storeName: store['name']?.toString() ?? 'Restaurant',
+          isLoggedIn: auth.isLoggedIn,
+          cartItemCount: cart.itemCount,
+          onCartTap: () => context.push('/store/${widget.storeId}/cart'),
           onCheckoutTap: () => _goToCheckout(cart),
+          onLoginTap: _goToLogin,
           onLogoutTap: () => context.read<AuthController>().logout(),
         ),
       ),
       body: SingleChildScrollView(
         child: Column(
           children: [
-            HeroSection(
-              isLoggedIn: isLoggedIn,
-              cartItemCount: cartItemCount,
-              onStartOrder: () => _scrollToSection('menu'),
-              onSignIn: () => _scrollToSection('login'),
-              onCheckoutTap: () => _goToCheckout(cart),
-            ),
-            SocialLoginSection(
-              isLoggedIn: isLoggedIn,
-              token: auth.token,
-              message: null,
-              onGoogle: () => _open('$apiBaseUrl/auth/google'),
-              onFacebook: () => _open('$apiBaseUrl/auth/facebook'),
-              onLine: () => _open('$apiBaseUrl/auth/line'),
-              onLogout: () => context.read<AuthController>().logout(),
+            StoreHeaderSection(
+              name: store['name']?.toString() ?? 'Restaurant',
+              address: store['address']?.toString(),
+              phone: store['phone']?.toString(),
+              isOpen: store['is_open'] != false,
+              closedReason: store['closed_reason']?.toString(),
+              todayHours: store['today_hours'] is Map
+                  ? '${store['today_hours']['open']}-${store['today_hours']['close']}'
+                  : null,
             ),
             if (widget.tableNumber != null)
               Container(
@@ -331,16 +319,6 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
-            // Table QR codes are bound to one store, so hide the store
-            // switcher in that flow - changing store would silently
-            // invalidate the table.
-            if (widget.tableNumber == null)
-              StoreSelectorSection(
-                stores: stores,
-                selectedStoreId: selectedStoreId,
-                isLoading: _loadingStores,
-                onSelectStore: _selectStore,
-              ),
             if (_loadingMenu)
               const Padding(
                 padding: EdgeInsets.all(32),
@@ -368,36 +346,18 @@ class _HomePageState extends State<HomePage> {
             CartSummarySection(
               lines: cart.lines,
               getProductById: getProductById,
-              cartItemCount: cartItemCount,
-              cartSubtotal: cartSubtotal,
+              cartItemCount: cart.itemCount,
+              cartSubtotal: cart.subtotal(getProductById),
               onIncreaseQty: cart.increase,
               onDecreaseQty: cart.decrease,
               onSetNotes: cart.setNotes,
               onClearCart: cart.clear,
               onCheckoutTap: () => _goToCheckout(cart),
             ),
-            const OrderStepsSection(),
-            const FooterSection(),
+            const SizedBox(height: 24),
           ],
         ),
       ),
     );
-  }
-
-  void _scrollToSection(String section) {
-    switch (section) {
-      case 'login':
-        web.document.getElementById('login-section')?.scrollIntoView();
-        break;
-      case 'menu':
-        web.document.getElementById('menu-section')?.scrollIntoView();
-        break;
-      case 'store':
-        web.document.getElementById('store-section')?.scrollIntoView();
-        break;
-      case 'cart':
-        web.document.getElementById('cart-section')?.scrollIntoView();
-        break;
-    }
   }
 }

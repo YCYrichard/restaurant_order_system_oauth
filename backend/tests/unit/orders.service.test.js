@@ -255,14 +255,13 @@ describe('orders.service.createOrder fulfillment + item notes', () => {
     expect(db.getConnection).not.toHaveBeenCalled();
   });
 
-  test('requires a delivery address for delivery orders', async () => {
+  test('rejects delivery - it is no longer an offered fulfillment type', async () => {
     await expect(
       ordersService.createOrder({
         ...validInput,
         fulfillmentType: 'delivery',
-        deliveryAddress: '   ',
       })
-    ).rejects.toThrow(/delivery address is required/);
+    ).rejects.toThrow(/fulfillmentType must be one of/);
 
     expect(db.getConnection).not.toHaveBeenCalled();
   });
@@ -279,18 +278,14 @@ describe('orders.service.createOrder fulfillment + item notes', () => {
     );
   });
 
-  test('persists a trimmed delivery address for delivery orders', async () => {
+  test('never persists a delivery address, even if the client sends one', async () => {
     await ordersService.createOrder({
       ...validInput,
-      fulfillmentType: 'delivery',
-      deliveryAddress: '  12 Main St  ',
+      deliveryAddress: '12 Main St',
     });
 
     expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fulfillmentType: 'delivery',
-        deliveryAddress: '12 Main St',
-      }),
+      expect.objectContaining({ deliveryAddress: null }),
       mockConnection
     );
   });

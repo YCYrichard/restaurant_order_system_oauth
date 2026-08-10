@@ -306,6 +306,11 @@ class _OrdersPanelState extends State<OrdersPanel> {
               ],
             ),
             const SizedBox(height: 6),
+            // Delivery is no longer an offered fulfillment choice, but this
+            // history view can still show an order placed while it was -
+            // mislabelling it as pickup would misrepresent what actually
+            // happened, so the case stays here even though it's gone from
+            // checkout.
             Row(
               children: [
                 Icon(

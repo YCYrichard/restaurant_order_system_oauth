@@ -3,7 +3,12 @@ const reportsRepository = require('../repositories/reports.repository');
 const storeHoursService = require('./store-hours.service');
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const FULFILLMENT_TYPES = ['pickup', 'delivery', 'dine_in'];
+// 'delivery' isn't offered as a fulfillment choice any more (see
+// orders.service.js), so it's not a filterable/breakdown bucket here either
+// - a historical delivery order still counts toward summary totals, it just
+// won't appear in byFulfillmentType (the map lookup below is a no-op for a
+// type it doesn't know).
+const FULFILLMENT_TYPES = ['pickup', 'dine_in'];
 
 class ReportValidationError extends Error {
   constructor(message) {

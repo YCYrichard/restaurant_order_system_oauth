@@ -116,7 +116,7 @@ describe('reports.service.getSalesReport', () => {
       {
         id: 2,
         total: '20.00',
-        fulfillment_type: 'delivery',
+        fulfillment_type: 'dine_in',
         created_at: '2026-08-01T04:30:00Z',
       },
     ]);
@@ -137,17 +137,29 @@ describe('reports.service.getSalesReport', () => {
   test('slices by fulfillment type', async () => {
     reportsRepository.findCompletedOrdersForReport.mockResolvedValue([
       { id: 1, total: '10.00', fulfillment_type: 'pickup', created_at: '2026-08-01T04:00:00Z' },
-      { id: 2, total: '20.00', fulfillment_type: 'delivery', created_at: '2026-08-01T04:00:00Z' },
+      { id: 2, total: '20.00', fulfillment_type: 'dine_in', created_at: '2026-08-01T04:00:00Z' },
     ]);
 
     const report = await reportsService.getSalesReport(1, {
       from: '2026-08-01',
       to: '2026-08-01',
-      fulfillmentType: 'delivery',
+      fulfillmentType: 'dine_in',
     });
 
     expect(report.summary.orderCount).toBe(1);
     expect(report.summary.revenue).toBe(20);
+  });
+
+  test('rejects delivery as a filter - it is no longer an offered fulfillment type', async () => {
+    reportsRepository.findCompletedOrdersForReport.mockResolvedValue([]);
+
+    await expect(
+      reportsService.getSalesReport(1, {
+        from: '2026-08-01',
+        to: '2026-08-01',
+        fulfillmentType: 'delivery',
+      })
+    ).rejects.toThrow(/fulfillmentType must be one of/);
   });
 
   test('always reports every fulfillment type bucket, even unfiltered', async () => {
@@ -160,13 +172,32 @@ describe('reports.service.getSalesReport', () => {
       to: '2026-08-01',
     });
 
-    expect(report.byFulfillmentType).toHaveLength(3);
+    expect(report.byFulfillmentType).toHaveLength(2);
     expect(
       report.byFulfillmentType.find((f) => f.fulfillmentType === 'pickup')
     ).toMatchObject({ orderCount: 1, revenue: 10 });
     expect(
-      report.byFulfillmentType.find((f) => f.fulfillmentType === 'delivery')
+      report.byFulfillmentType.find((f) => f.fulfillmentType === 'dine_in')
     ).toMatchObject({ orderCount: 0, revenue: 0 });
+  });
+
+  test('counts a historical delivery order in totals but not in the fulfillment-type breakdown', async () => {
+    // Old orders placed before delivery was removed still exist in the
+    // database - they must not vanish from revenue, only from a bucket that
+    // no longer models them.
+    reportsRepository.findCompletedOrdersForReport.mockResolvedValue([
+      { id: 1, total: '30.00', fulfillment_type: 'delivery', created_at: '2026-08-01T04:00:00Z' },
+    ]);
+
+    const report = await reportsService.getSalesReport(1, {
+      from: '2026-08-01',
+      to: '2026-08-01',
+    });
+
+    expect(report.summary).toMatchObject({ orderCount: 1, revenue: 30 });
+    expect(
+      report.byFulfillmentType.every((f) => f.fulfillmentType !== 'delivery')
+    ).toBe(true);
   });
 
   test('nets refunds against revenue without double-counting across days', async () => {

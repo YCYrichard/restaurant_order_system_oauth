@@ -699,7 +699,6 @@ class _KitchenPageState extends State<KitchenPage> {
                   child: Text(
                     switch (fulfillmentType) {
                       'dine_in' => 'TABLE ${order['table_number'] ?? '?'}',
-                      'delivery' => 'DELIVERY',
                       _ => 'PICKUP',
                     },
                     style: const TextStyle(

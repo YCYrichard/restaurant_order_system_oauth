@@ -1,18 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:web/web.dart' as web;
 
-/// Shared card-style wrapper used by every landing-page section
-/// (login, store picker, menu, cart, steps). Handles the optional
-/// scroll-anchor id used by the top nav's "scroll to section" buttons.
+/// Shared card-style wrapper used by page sections that want a title,
+/// subtitle, and a consistent rounded card frame around their content.
 class SectionContainer extends StatelessWidget {
-  final String? sectionId;
   final String title;
   final String subtitle;
   final Widget child;
 
   const SectionContainer({
     super.key,
-    this.sectionId,
     required this.title,
     required this.subtitle,
     required this.child,
@@ -21,7 +17,6 @@ class SectionContainer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      key: sectionId != null ? ValueKey(sectionId) : null,
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
       child: Center(
@@ -36,25 +31,6 @@ class SectionContainer extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (sectionId != null)
-                  Builder(
-                    builder: (context) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        final element =
-                            web.document.getElementById(sectionId!);
-                        if (element == null) {
-                          final hostElement =
-                              web.document.querySelector('[flt-glass-pane]');
-                          if (hostElement != null) {
-                            final anchor = web.document.createElement('div');
-                            anchor.id = sectionId!;
-                            hostElement.appendChild(anchor);
-                          }
-                        }
-                      });
-                      return const SizedBox.shrink();
-                    },
-                  ),
                 Text(
                   title,
                   style: const TextStyle(

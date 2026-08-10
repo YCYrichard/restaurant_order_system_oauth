@@ -22,7 +22,10 @@ const ORDER_STATUSES = [
   'cancelled',
 ];
 const TERMINAL_STATUSES = ['completed', 'cancelled'];
-const FULFILLMENT_TYPES = ['pickup', 'delivery', 'dine_in'];
+// 'delivery' stays a legal value in the orders.fulfillment_type ENUM so
+// historical orders placed before it was removed still read correctly - it
+// just isn't offered here as a choice for new ones.
+const FULFILLMENT_TYPES = ['pickup', 'dine_in'];
 const FORWARD_TRANSITIONS = {
   pending: 'confirmed',
   confirmed: 'preparing',
@@ -108,7 +111,6 @@ function validateCreateOrderInput(input) {
     customerName,
     customerPhone,
     fulfillmentType,
-    deliveryAddress,
   } = input;
 
   if (
@@ -128,15 +130,6 @@ function validateCreateOrderInput(input) {
   ) {
     throw new OrderValidationError(
       `fulfillmentType must be one of: ${FULFILLMENT_TYPES.join(', ')}`
-    );
-  }
-
-  if (
-    fulfillmentType === 'delivery' &&
-    (typeof deliveryAddress !== 'string' || !deliveryAddress.trim())
-  ) {
-    throw new OrderValidationError(
-      'A delivery address is required for delivery orders'
     );
   }
 
@@ -240,7 +233,6 @@ async function createOrder(input) {
     customerEmail,
     notes,
     fulfillmentType,
-    deliveryAddress,
     tableNumber,
     couponCode,
   } = input;
@@ -331,8 +323,10 @@ async function createOrder(input) {
         customerEmail,
         notes,
         fulfillmentType: fulfillmentType || 'pickup',
-        deliveryAddress:
-          fulfillmentType === 'delivery' ? deliveryAddress.trim() : null,
+        // Delivery is no longer offered as a fulfillment choice - new
+        // orders never carry an address. The column stays on the table for
+        // historical orders placed while it was.
+        deliveryAddress: null,
         tableNumber:
           fulfillmentType === 'dine_in' ? Number(tableNumber) : null,
       },

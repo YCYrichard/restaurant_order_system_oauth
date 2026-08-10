@@ -18,7 +18,6 @@ class MenuProductsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SectionContainer(
-      sectionId: 'menu-section',
       title: 'Menu',
       subtitle:
           'Customers typically browse by category first, then add items directly into the cart from product cards.',

@@ -183,23 +183,6 @@ class _MyOrdersPageState extends State<MyOrdersPage> {
                   const SizedBox(height: 16),
                   ..._orders.map(_buildOrderCard),
                 ],
-                const SizedBox(height: 24),
-                // Guest checkout is supported (POST /orders needs no auth), so
-                // orders placed while signed out have no user_id and can never
-                // appear here - worth saying plainly rather than looking broken.
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF5EF),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: const Text(
-                    'Only orders placed while signed in appear here. '
-                    'Orders placed as a guest are not linked to your account.',
-                    style: TextStyle(color: Color(0xFF625D5A), height: 1.5),
-                  ),
-                ),
               ],
             ),
           ),

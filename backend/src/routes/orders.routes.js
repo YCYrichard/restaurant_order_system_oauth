@@ -6,10 +6,11 @@ const {
   requireStoreAccess,
 } = require('../middleware/auth.middleware');
 
-// Guest checkout is intentional: no auth required to place an order, and
-// for the same reason paying for one needs no account either.
-router.post('/', controller.createOrder);
-router.post('/:orderId/payments', paymentsController.payOrder);
+// An account is required to order - createOrder attributes the order to
+// the authenticated caller, and payOrder verifies the caller owns the order
+// it's paying for (both enforced in their respective services).
+router.post('/', requireAuth, controller.createOrder);
+router.post('/:orderId/payments', requireAuth, paymentsController.payOrder);
 router.get('/user/:userId', requireAuth, controller.getUserOrders);
 
 // Store-scoped listing for admin/staff order management. storeId is in the

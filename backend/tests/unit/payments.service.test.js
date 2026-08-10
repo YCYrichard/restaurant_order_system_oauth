@@ -19,12 +19,16 @@ const paymentsService = require('../../src/services/payments.service');
 
 const ORDER = {
   id: 7,
+  store_id: 10,
+  user_id: 7,
   total: '250.00',
   payment_status: 'unpaid',
   customer_name: 'Ada',
   customer_phone: '0912345678',
   customer_email: 'ada@example.com',
 };
+
+const OWNER = { id: 7, role: 'customer' };
 
 const CREDENTIALS = {
   TAPPAY_PARTNER_KEY: 'partner_test_key',
@@ -95,7 +99,7 @@ describe('payments service', () => {
         raw: { status: 0 },
       });
 
-      await paymentsService.payOrder(7, {
+      await paymentsService.payOrder(7, OWNER, {
         provider: 'tappay',
         prime: 'prime_abc',
         // A client-supplied amount has no route into the charge at all.
@@ -117,7 +121,7 @@ describe('payments service', () => {
         raw: { status: 0 },
       });
 
-      const result = await paymentsService.payOrder(7, {
+      const result = await paymentsService.payOrder(7, OWNER, {
         provider: 'tappay',
         prime: 'prime_abc',
       });
@@ -151,7 +155,7 @@ describe('payments service', () => {
         raw: { status: 0 },
       });
 
-      await paymentsService.payOrder(7, {
+      await paymentsService.payOrder(7, OWNER, {
         provider: 'tappay',
         prime: 'prime_abc',
       });
@@ -170,7 +174,7 @@ describe('payments service', () => {
       tappay.charge.mockRejectedValue(declined);
 
       await expect(
-        paymentsService.payOrder(7, { provider: 'tappay', prime: 'p' })
+        paymentsService.payOrder(7, OWNER, { provider: 'tappay', prime: 'p' })
       ).rejects.toThrow('Card is expired');
 
       // The failed attempt is part of the order's history - it is what makes
@@ -185,7 +189,7 @@ describe('payments service', () => {
     });
 
     it('leaves a manual order unpaid until it is collected', async () => {
-      const result = await paymentsService.payOrder(7, { provider: 'manual' });
+      const result = await paymentsService.payOrder(7, OWNER, { provider: 'manual' });
 
       expect(result).toMatchObject({ provider: 'manual', status: 'pending' });
       expect(paymentsRepository.updateOrderPaymentStatus).toHaveBeenCalledWith(
@@ -200,7 +204,7 @@ describe('payments service', () => {
         payment_status: 'paid',
       });
 
-      await expect(paymentsService.payOrder(7, {})).rejects.toThrow(
+      await expect(paymentsService.payOrder(7, OWNER, {})).rejects.toThrow(
         'already been paid'
       );
       expect(paymentsRepository.insertPayment).not.toHaveBeenCalled();
@@ -209,21 +213,52 @@ describe('payments service', () => {
     it('refuses to charge an order with nothing outstanding', async () => {
       paymentsRepository.sumPaidForOrder.mockResolvedValue(250);
 
-      await expect(paymentsService.payOrder(7, {})).rejects.toThrow(
+      await expect(paymentsService.payOrder(7, OWNER, {})).rejects.toThrow(
         'nothing left to pay'
       );
     });
 
     it('rejects a card payment when the gateway is not configured', async () => {
       await expect(
-        paymentsService.payOrder(7, { provider: 'tappay', prime: 'p' })
+        paymentsService.payOrder(7, OWNER, { provider: 'tappay', prime: 'p' })
       ).rejects.toMatchObject({ code: 'PAYMENT_NOT_CONFIGURED' });
     });
 
     it('rejects an unknown provider', async () => {
       await expect(
-        paymentsService.payOrder(7, { provider: 'bitcoin' })
+        paymentsService.payOrder(7, OWNER, { provider: 'bitcoin' })
       ).rejects.toThrow("Unknown payment provider 'bitcoin'");
+    });
+
+    it("denies a different customer with no store access", async () => {
+      ordersRepository.hasStoreAccess.mockResolvedValue(false);
+      const stranger = { id: 999, role: 'customer' };
+
+      await expect(
+        paymentsService.payOrder(7, stranger, { provider: 'manual' })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+
+      expect(ordersRepository.hasStoreAccess).toHaveBeenCalledWith(999, 10);
+      expect(paymentsRepository.insertPayment).not.toHaveBeenCalled();
+    });
+
+    it('allows staff with access to the order\'s store', async () => {
+      ordersRepository.hasStoreAccess.mockResolvedValue(true);
+      const staff = { id: 42, role: 'staff' };
+
+      await expect(
+        paymentsService.payOrder(7, staff, { provider: 'manual' })
+      ).resolves.toMatchObject({ status: 'pending' });
+    });
+
+    it('allows an admin regardless of store access', async () => {
+      const admin = { id: 999, role: 'admin' };
+
+      await expect(
+        paymentsService.payOrder(7, admin, { provider: 'manual' })
+      ).resolves.toMatchObject({ status: 'pending' });
+
+      expect(ordersRepository.hasStoreAccess).not.toHaveBeenCalled();
     });
   });
 
