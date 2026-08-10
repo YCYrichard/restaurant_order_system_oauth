@@ -3,6 +3,7 @@ jest.mock('../../src/config/db', () => ({
   getConnection: jest.fn(),
 }));
 jest.mock('../../src/repositories/orders.repository');
+jest.mock('../../src/repositories/products.repository');
 jest.mock('../../src/repositories/coupons.repository');
 jest.mock('../../src/services/events.service');
 jest.mock('../../src/services/coupons.service', () => {
@@ -12,6 +13,7 @@ jest.mock('../../src/services/coupons.service', () => {
 
 const db = require('../../src/config/db');
 const ordersRepository = require('../../src/repositories/orders.repository');
+const productsRepository = require('../../src/repositories/products.repository');
 const couponsRepository = require('../../src/repositories/coupons.repository');
 const couponsService = require('../../src/services/coupons.service');
 const eventsService = require('../../src/services/events.service');
@@ -25,11 +27,21 @@ const validInput = {
   customerPhone: '0912345678',
 };
 
+// validInput's single line is productId 1 x2 at 10 = 20, so the store's
+// own price must agree or every createOrder test would trip the new
+// stale-cart check.
+function mockCatalog(overrides = {}) {
+  productsRepository.findProductsByIds.mockResolvedValue([
+    { id: 1, store_id: 1, name: 'Test Product', price: 10, is_active: 1, ...overrides },
+  ]);
+}
+
 describe('orders.service.createOrder', () => {
   let mockConnection;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockCatalog();
 
     mockConnection = {
       beginTransaction: jest.fn().mockResolvedValue(undefined),
@@ -49,11 +61,70 @@ describe('orders.service.createOrder', () => {
     expect(db.getConnection).not.toHaveBeenCalled();
   });
 
-  test('rejects when total does not match item prices and quantities', async () => {
+  test('rejects a cart whose total disagrees with the store\'s prices', async () => {
     const badInput = { ...validInput, total: 999 };
 
     await expect(ordersService.createOrder(badInput)).rejects.toThrow(
-      'Order total does not match item prices and quantities'
+      /Prices have changed/
+    );
+
+    expect(db.getConnection).not.toHaveBeenCalled();
+  });
+
+  // The vulnerability this phase closes: previously the server only checked
+  // the client's total against the client's own prices, so both could be
+  // forged together and an 8.90 item bought for 0.01.
+  test('refuses a forged low price even when the total agrees with it', async () => {
+    await expect(
+      ordersService.createOrder({
+        ...validInput,
+        items: [{ productId: 1, quantity: 1, price: 0.01 }],
+        total: 0.01,
+      })
+    ).rejects.toThrow(/Prices have changed/);
+
+    expect(db.getConnection).not.toHaveBeenCalled();
+  });
+
+  test('prices the order from the store, ignoring what the client sent', async () => {
+    ordersRepository.insertOrder.mockResolvedValue(42);
+    ordersRepository.insertOrderItems.mockResolvedValue(undefined);
+    ordersRepository.findOrderWithItems.mockResolvedValue({ id: 42 });
+
+    // Client claims a lower unit price but a total matching the real one.
+    await ordersService.createOrder({
+      ...validInput,
+      items: [{ productId: 1, quantity: 2, price: 1 }],
+      total: 20,
+    });
+
+    expect(ordersRepository.insertOrderItems).toHaveBeenCalledWith(
+      42,
+      [expect.objectContaining({ productId: 1, quantity: 2, price: 10 })],
+      mockConnection
+    );
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ total: 20 }),
+      mockConnection
+    );
+  });
+
+  test('rejects a product that belongs to another store', async () => {
+    // Scoped lookup returns nothing for a foreign product id.
+    productsRepository.findProductsByIds.mockResolvedValue([]);
+
+    await expect(ordersService.createOrder(validInput)).rejects.toThrow(
+      /is not available at this store/
+    );
+
+    expect(db.getConnection).not.toHaveBeenCalled();
+  });
+
+  test('rejects an inactive product', async () => {
+    mockCatalog({ is_active: 0, name: 'Retired Burger' });
+
+    await expect(ordersService.createOrder(validInput)).rejects.toThrow(
+      /Retired Burger is no longer available/
     );
 
     expect(db.getConnection).not.toHaveBeenCalled();
@@ -102,6 +173,7 @@ describe('orders.service.createOrder fulfillment + item notes', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockCatalog();
 
     mockConnection = {
       beginTransaction: jest.fn().mockResolvedValue(undefined),
@@ -226,6 +298,7 @@ describe('orders.service.createOrder coupon handling', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockCatalog();
 
     mockConnection = {
       beginTransaction: jest.fn().mockResolvedValue(undefined),

@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const ordersRepository = require('../repositories/orders.repository');
+const productsRepository = require('../repositories/products.repository');
 const couponsRepository = require('../repositories/coupons.repository');
 const couponsService = require('./coupons.service');
 const eventsService = require('./events.service');
@@ -81,6 +82,10 @@ function computeItemsTotal(items) {
   );
 }
 
+function roundMoney(value) {
+  return Math.round(value * 100) / 100;
+}
+
 function validateCreateOrderInput(input) {
   const {
     storeId,
@@ -141,19 +146,50 @@ function validateCreateOrderInput(input) {
         'Each item requires a valid productId and quantity'
       );
     }
+  }
+}
 
-    if (!Number.isFinite(Number(item.price)) || Number(item.price) < 0) {
-      throw new OrderValidationError('Each item requires a valid price');
+/// Replaces every client-submitted price with the store's own price.
+///
+/// The client used to be trusted here: validation only checked that the
+/// submitted `total` matched the sum of the submitted prices, which a
+/// caller controls on both sides - so an 8.90 item could be ordered for
+/// 0.01 and every check passed. Prices now come from the database, and the
+/// client's figures are only used to detect a stale cart.
+async function resolvePricedItems(storeId, items) {
+  const productIds = [...new Set(items.map((item) => Number(item.productId)))];
+  const products = await productsRepository.findProductsByIds(
+    storeId,
+    productIds
+  );
+
+  const productsById = new Map(
+    products.map((product) => [Number(product.id), product])
+  );
+
+  return items.map((item) => {
+    const product = productsById.get(Number(item.productId));
+
+    // Covers both "no such product" and "belongs to another store", since
+    // the lookup is already scoped to storeId - a cross-store id simply
+    // isn't in the result set.
+    if (!product) {
+      throw new OrderValidationError(
+        `Product ${item.productId} is not available at this store`
+      );
     }
-  }
 
-  const computedTotal = computeItemsTotal(items);
+    if (!product.is_active) {
+      throw new OrderValidationError(`${product.name} is no longer available`);
+    }
 
-  if (Math.abs(computedTotal - Number(total)) > TOTAL_TOLERANCE) {
-    throw new OrderValidationError(
-      'Order total does not match item prices and quantities'
-    );
-  }
+    return {
+      productId: Number(product.id),
+      quantity: Number(item.quantity),
+      price: Number(product.price),
+      notes: item.notes,
+    };
+  });
 }
 
 async function createOrder(input) {
@@ -174,17 +210,26 @@ async function createOrder(input) {
     couponCode,
   } = input;
 
+  // Priced from the database before the transaction opens - a stale cart
+  // should fail fast without holding a connection.
+  const pricedItems = await resolvePricedItems(storeId, items);
+  const subtotal = roundMoney(computeItemsTotal(pricedItems));
+
+  // The client's total is no longer an input to the charge, only a
+  // staleness check: a mismatch means its cached prices have moved, and
+  // silently charging the new figure would surprise the customer.
+  if (Math.abs(subtotal - Number(total)) > TOTAL_TOLERANCE) {
+    throw new OrderValidationError(
+      'Prices have changed since this cart was created. Please refresh and try again.'
+    );
+  }
+
   const connection = await db.getConnection();
   let orderId;
 
   try {
     await connection.beginTransaction();
 
-    // `total` has already been reconciled against the line items, so it's
-    // the trustworthy pre-discount subtotal. Any discount is derived here
-    // from the coupon code alone - the client never supplies an amount, or
-    // it could simply claim its own discount.
-    const subtotal = Number(total);
     let discountAmount = 0;
     let appliedCoupon = null;
 
@@ -216,7 +261,7 @@ async function createOrder(input) {
       {
         userId,
         storeId,
-        total: Math.round((subtotal - discountAmount) * 100) / 100,
+        total: roundMoney(subtotal - discountAmount),
         discountAmount,
         couponCode: appliedCoupon ? appliedCoupon.code : null,
         customerName,
@@ -232,7 +277,8 @@ async function createOrder(input) {
       connection
     );
 
-    await ordersRepository.insertOrderItems(orderId, items, connection);
+    // pricedItems, not items - what's persisted must be the store's prices.
+    await ordersRepository.insertOrderItems(orderId, pricedItems, connection);
 
     if (appliedCoupon) {
       await couponsRepository.insertRedemption(
