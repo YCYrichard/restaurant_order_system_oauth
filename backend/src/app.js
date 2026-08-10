@@ -16,6 +16,7 @@ const couponsRoutes = require('./routes/coupons.routes');
 const eventsRoutes = require('./routes/events.routes');
 const modifiersRoutes = require('./routes/modifiers.routes');
 const paymentsRoutes = require('./routes/payments.routes');
+const reportsRoutes = require('./routes/reports.routes');
 const requestId = require('./middleware/requestId.middleware');
 const { notFoundHandler, errorHandler } = require('./middleware/error.middleware');
 
@@ -93,6 +94,7 @@ app.use('/categories', categoriesRoutes);
 // deliberately deferred migration rather than something to fold in here.
 app.use('/api/v1/users', usersRoutes);
 app.use('/api/v1/coupons', couponsRoutes);
+app.use('/api/v1/reports', reportsRoutes);
 app.use('/events', eventsRoutes);
 app.use('/modifiers', modifiersRoutes);
 app.use('/payments', paymentsRoutes);
