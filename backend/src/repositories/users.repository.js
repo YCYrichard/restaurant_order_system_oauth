@@ -104,10 +104,28 @@ async function revokeStoreAccess(userId, storeId) {
   return result.affectedRows > 0;
 }
 
+// Separate from findUserById, which deliberately omits provider_id from its
+// SELECT list - this exists only for notifications.service to resolve a
+// push recipient, not for anywhere provider_id shouldn't otherwise surface.
+async function findNotificationTarget(userId) {
+  const [rows] = await db.execute(
+    `
+      SELECT id, provider, provider_id
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+    `,
+    [userId]
+  );
+
+  return rows[0] || null;
+}
+
 module.exports = {
   findUsers,
   countUsers,
   findUserById,
+  findNotificationTarget,
   findLocalUserByUsername,
   insertLocalUser,
   findStoreAccessForUser,

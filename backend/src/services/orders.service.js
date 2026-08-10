@@ -10,6 +10,7 @@ const couponsRepository = require('../repositories/coupons.repository');
 const couponsService = require('./coupons.service');
 const paymentsService = require('./payments.service');
 const eventsService = require('./events.service');
+const notificationsService = require('./notifications.service');
 
 const TOTAL_TOLERANCE = 0.01;
 
@@ -513,6 +514,13 @@ async function updateOrderStatus(orderId, user, status) {
     userId: order.user_id ?? null,
     order: updated,
   });
+
+  // After the write and the live event, not instead of it - the in-app
+  // channel IS that same SSE event; this only reaches channels beyond it
+  // (today, LINE, when configured).
+  if (status === 'ready') {
+    await notificationsService.notifyOrderReady(updated);
+  }
 
   return updated;
 }

@@ -17,6 +17,7 @@ jest.mock('../../src/services/store-hours.service', () => {
 jest.mock('../../src/repositories/coupons.repository');
 jest.mock('../../src/services/events.service');
 jest.mock('../../src/services/payments.service');
+jest.mock('../../src/services/notifications.service');
 jest.mock('../../src/services/coupons.service', () => {
   const actual = jest.requireActual('../../src/services/coupons.service');
   return { ...actual, resolveDiscount: jest.fn() };
@@ -32,6 +33,7 @@ const couponsRepository = require('../../src/repositories/coupons.repository');
 const couponsService = require('../../src/services/coupons.service');
 const eventsService = require('../../src/services/events.service');
 const paymentsService = require('../../src/services/payments.service');
+const notificationsService = require('../../src/services/notifications.service');
 const ordersService = require('../../src/services/orders.service');
 
 const validInput = {
@@ -734,6 +736,47 @@ describe('orders.service.updateOrderStatus', () => {
         userId: 3,
       })
     );
+  });
+
+  test('notifies the customer when an order becomes ready', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      user_id: 3,
+      status: 'preparing',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+    ordersRepository.updateOrderStatus.mockResolvedValue(true);
+    ordersRepository.findOrderWithItems.mockResolvedValue({
+      id: 5,
+      status: 'ready',
+    });
+
+    await ordersService.updateOrderStatus(5, ownerUser, 'ready');
+
+    expect(notificationsService.notifyOrderReady).toHaveBeenCalledWith({
+      id: 5,
+      status: 'ready',
+    });
+  });
+
+  test('does not notify for any other status change', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      user_id: 3,
+      status: 'pending',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+    ordersRepository.updateOrderStatus.mockResolvedValue(true);
+    ordersRepository.findOrderWithItems.mockResolvedValue({
+      id: 5,
+      status: 'confirmed',
+    });
+
+    await ordersService.updateOrderStatus(5, ownerUser, 'confirmed');
+
+    expect(notificationsService.notifyOrderReady).not.toHaveBeenCalled();
   });
 
   test('allows recalling one step back after a mis-bump', async () => {

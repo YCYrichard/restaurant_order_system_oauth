@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../core/auth/auth_controller.dart';
 import '../core/events/event_stream_client.dart';
+import '../core/notifications/browser_notifier.dart';
 import '../features/orders/widgets/receipt_dialog.dart';
 
 /// Customer-facing order history. Surfaces GET /orders/user/:userId, which
@@ -35,10 +36,40 @@ class _MyOrdersPageState extends State<MyOrdersPage> {
     _events = EventStreamClient(
       auth: context.read<AuthController>(),
       path: '/events/my-orders',
-      onEvent: (_) {
-        if (mounted) _loadOrders();
+      onEvent: (event) {
+        if (!mounted) return;
+
+        if (event.type == 'order.status_changed' &&
+            event.data['order'] is Map &&
+            event.data['order']['status'] == 'ready') {
+          _announceReady(Map<String, dynamic>.from(event.data['order']));
+        }
+
+        _loadOrders();
       },
     )..start();
+  }
+
+  /// The in-app channel for a ready order: a visible banner here (where the
+  /// SSE connection already lives) plus a browser Notification if the
+  /// customer granted permission when they placed the order. This is the
+  /// delivery notifications.service.js's 'inapp' provider on the backend
+  /// already assumes happened the moment it logged that channel as sent.
+  void _announceReady(Map<String, dynamic> order) {
+    final orderId = order['id'];
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Order #$orderId is ready for pickup!'),
+        duration: const Duration(seconds: 6),
+        backgroundColor: Colors.green.shade700,
+      ),
+    );
+
+    BrowserNotifier.show(
+      'Order #$orderId is ready!',
+      body: 'Your order is ready for pickup.',
+    );
   }
 
   @override

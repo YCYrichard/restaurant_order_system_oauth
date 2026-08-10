@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../core/api/api_client.dart';
 import '../core/auth/auth_controller.dart';
+import '../core/notifications/browser_notifier.dart';
 import '../core/payments/payment_config.dart';
 import '../core/payments/tappay_sdk.dart';
 import '../features/cart/cart_controller.dart';
@@ -326,6 +328,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
           _paymentFailed = paymentFailed;
           _paymentError = paymentError;
         });
+
+        // Right after placing an order is the one moment "we'll notify you
+        // when it's ready" is an obviously good reason to say yes - asking
+        // on page load instead just trains people to reflexively deny it.
+        unawaited(BrowserNotifier.requestPermissionIfNeeded());
       } else {
         // Surface the server's own message where it's actionable (an
         // expired or invalid coupon, a missing address) instead of a
