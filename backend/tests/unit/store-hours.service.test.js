@@ -159,3 +159,112 @@ describe('store-hours.service.getStoreOpenState', () => {
     expect(state.reason).toBe('Lunar New Year');
   });
 });
+
+describe('store-hours.service.getPickupSlots', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storesRepository.findClosureOnDate.mockResolvedValue(null);
+  });
+
+  const storeWithPrep = { ...store, min_prep_minutes: 15 };
+
+  test('rejects with no slots when the store is not open right now', async () => {
+    storesRepository.findHoursForStore.mockResolvedValue([
+      { day_of_week: 1, open_time: '00:00:00', close_time: '00:00:00', is_closed: 1 },
+    ]);
+
+    const result = await storeHoursService.getPickupSlots(
+      storeWithPrep,
+      utc('2026-08-10T02:30:00Z')
+    );
+
+    expect(result.isOpen).toBe(false);
+    expect(result.slots).toEqual([]);
+    expect(result.asapReadyAt).toBeNull();
+    expect(result.reason).toMatch(/Closed on Monday/);
+  });
+
+  test('rounds the earliest slot up to the next boundary past the prep window', async () => {
+    storesRepository.findHoursForStore.mockResolvedValue([]); // always open
+
+    // 10:30 Taipei + 15 min prep = 10:45, already a 15-minute boundary.
+    const result = await storeHoursService.getPickupSlots(
+      storeWithPrep,
+      utc('2026-08-10T02:30:00Z')
+    );
+
+    expect(result.isOpen).toBe(true);
+    expect(result.slots[0]).toMatchObject({ label: '10:45' });
+    expect(result.asapReadyAt).toBe('2026-08-10T02:45:00.000Z');
+  });
+
+  test('rounds up rather than down when prep time lands mid-interval', async () => {
+    storesRepository.findHoursForStore.mockResolvedValue([]);
+
+    // 10:31 Taipei + 15 min prep = 10:46 -> next boundary is 10:45... no,
+    // it must round UP, so the first offerable slot is 11:00.
+    const result = await storeHoursService.getPickupSlots(
+      storeWithPrep,
+      utc('2026-08-10T02:31:00Z')
+    );
+
+    expect(result.slots[0]).toMatchObject({ label: '11:00' });
+  });
+
+  test('stops offering slots at closing time', async () => {
+    storesRepository.findHoursForStore.mockResolvedValue([
+      { day_of_week: 1, open_time: '09:00:00', close_time: '17:00:00', is_closed: 0 },
+    ]);
+
+    const result = await storeHoursService.getPickupSlots(
+      storeWithPrep,
+      utc('2026-08-10T02:30:00Z') // 10:30 Taipei
+    );
+
+    expect(result.slots[0]).toMatchObject({ label: '10:45' });
+    expect(result.slots[result.slots.length - 1]).toMatchObject({ label: '16:45' });
+    expect(result.slots.every((s) => s.label < '17:00')).toBe(true);
+  });
+
+  test('reports no slots left when prep time pushes past closing, without saying the store is closed', async () => {
+    storesRepository.findHoursForStore.mockResolvedValue([
+      { day_of_week: 1, open_time: '09:00:00', close_time: '11:00:00', is_closed: 0 },
+    ]);
+
+    const result = await storeHoursService.getPickupSlots(
+      storeWithPrep,
+      utc('2026-08-10T02:50:00Z') // 10:50 Taipei, +15 min prep = 11:05, past 11:00 close
+    );
+
+    expect(result.isOpen).toBe(true);
+    expect(result.slots).toEqual([]);
+    expect(result.reason).toMatch(/No pickup times left/);
+  });
+
+  test('caps an unbounded (always-open) store at a sane number of slots', async () => {
+    storesRepository.findHoursForStore.mockResolvedValue([]);
+
+    const result = await storeHoursService.getPickupSlots(
+      storeWithPrep,
+      utc('2026-08-10T02:30:00Z')
+    );
+
+    expect(result.slots.length).toBeLessThanOrEqual(32);
+  });
+
+  test('returns each slot as a real ISO instant, not just a label', async () => {
+    storesRepository.findHoursForStore.mockResolvedValue([
+      { day_of_week: 1, open_time: '09:00:00', close_time: '17:00:00', is_closed: 0 },
+    ]);
+
+    const result = await storeHoursService.getPickupSlots(
+      { ...storeWithPrep, min_prep_minutes: 0 },
+      utc('2026-08-10T02:30:00Z')
+    );
+
+    expect(result.slots[0]).toMatchObject({
+      label: '10:30',
+      readyAt: '2026-08-10T02:30:00.000Z',
+    });
+  });
+});

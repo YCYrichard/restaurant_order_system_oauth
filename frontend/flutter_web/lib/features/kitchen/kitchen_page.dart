@@ -332,6 +332,14 @@ class _KitchenPageState extends State<KitchenPage> {
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
+  String _formatTicketTime(String iso) {
+    final parsed = DateTime.tryParse(iso);
+    if (parsed == null) return iso;
+    final local = parsed.toLocal();
+    return '${local.hour.toString().padLeft(2, '0')}:'
+        '${local.minute.toString().padLeft(2, '0')}';
+  }
+
   /// Total quantity per item across every open ticket - what a prep cook
   /// wants to know ("14 burgers on, total") without adding up cards by eye.
   Map<String, int> get _allDayCounts {
@@ -708,6 +716,30 @@ class _KitchenPageState extends State<KitchenPage> {
                     ),
                   ),
                 ),
+                if (order['desired_ready_at'] != null) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.deepOrange.withValues(alpha: 0.25),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      // A promised ready time nobody in the kitchen can see
+                      // is worthless - this is the reason it's on the badge
+                      // row, not buried lower on the ticket.
+                      'READY ${_formatTicketTime(order['desired_ready_at'].toString())}',
+                      style: const TextStyle(
+                        color: Colors.deepOrange,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
                 const Spacer(),
                 Text(
                   _formatElapsed(elapsed),

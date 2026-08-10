@@ -17,7 +17,14 @@ class StoreNotFoundError extends Error {
   }
 }
 
-function normalizeInput({ name, address, phone, taxRate, taxInclusive }) {
+function normalizeInput({
+  name,
+  address,
+  phone,
+  taxRate,
+  taxInclusive,
+  minPrepMinutes,
+}) {
   const trimmedName = typeof name === 'string' ? name.trim() : '';
 
   if (!trimmedName) {
@@ -46,6 +53,19 @@ function normalizeInput({ name, address, phone, taxRate, taxInclusive }) {
 
   if (taxInclusive !== undefined) {
     normalized.taxInclusive = taxInclusive === true || taxInclusive === 'true';
+  }
+
+  // Also optional on update, same reasoning as tax above.
+  if (minPrepMinutes !== undefined) {
+    const minutes = Number(minPrepMinutes);
+
+    if (!Number.isInteger(minutes) || minutes < 0 || minutes > 240) {
+      throw new StoreValidationError(
+        'minPrepMinutes must be a whole number of minutes between 0 and 240'
+      );
+    }
+
+    normalized.minPrepMinutes = minutes;
   }
 
   return normalized;
@@ -161,6 +181,13 @@ async function getStore(storeId) {
   return store;
 }
 
+/// Public, unauthenticated - the checkout page needs this before a customer
+/// has any reason to be signed in.
+async function getPickupSlots(storeId) {
+  const store = await getStore(storeId);
+  return storeHoursService.getPickupSlots(store);
+}
+
 async function updateStore(storeId, input) {
   const updated = await storesRepository.updateStore(
     storeId,
@@ -198,6 +225,7 @@ module.exports = {
   addStoreClosure,
   removeStoreClosure,
   getStore,
+  getPickupSlots,
   updateStore,
   updateStoreStatus,
 };

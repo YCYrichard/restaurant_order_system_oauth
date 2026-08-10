@@ -8,6 +8,7 @@ import '../core/payments/payment_config.dart';
 import '../core/payments/tappay_sdk.dart';
 import '../features/cart/cart_controller.dart';
 import '../features/checkout/widgets/card_payment_fields.dart';
+import '../features/checkout/widgets/pickup_time_selector.dart';
 import '../features/menu/data/menu_repository.dart';
 import '../models/product.dart';
 
@@ -18,10 +19,15 @@ class CheckoutPage extends StatefulWidget {
   /// dine-in order for that table rather than pickup.
   final int? tableNumber;
 
+  /// Carried over from the landing page's "Ready by" selector, if the
+  /// customer picked a slot there. Null means ASAP; still editable here.
+  final String? initialReadyAt;
+
   const CheckoutPage({
     super.key,
     required this.storeId,
     this.tableNumber,
+    this.initialReadyAt,
   });
 
   @override
@@ -39,6 +45,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   bool _isSubmitting = false;
   String? _orderId;
+  String? _confirmedReadyAt;
   String? _errorMessage;
   String _fulfillmentType = 'pickup';
 
@@ -54,6 +61,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool _paymentFailed = false;
   String? _paymentError;
 
+  Map<String, dynamic>? _pickupSlots;
+  bool _loadingPickupSlots = true;
+  String? _selectedReadyAt;
+
   @override
   void initState() {
     super.initState();
@@ -62,8 +73,33 @@ class _CheckoutPageState extends State<CheckoutPage> {
       _fulfillmentType = 'dine_in';
     }
 
+    _selectedReadyAt = widget.initialReadyAt;
+
     _loadProducts();
     _loadPaymentConfig();
+
+    if (widget.tableNumber == null) {
+      _loadPickupSlots();
+    }
+  }
+
+  Future<void> _loadPickupSlots() async {
+    setState(() => _loadingPickupSlots = true);
+
+    try {
+      final decoded =
+          await ApiClient.getJson('/stores/${widget.storeId}/pickup-slots');
+
+      if (!mounted) return;
+
+      setState(() {
+        _pickupSlots = Map<String, dynamic>.from(decoded);
+        _loadingPickupSlots = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingPickupSlots = false);
+    }
   }
 
   // Fetched once up front so the order summary can show the right payment
@@ -219,6 +255,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
       'fulfillmentType': _fulfillmentType,
       'tableNumber':
           _fulfillmentType == 'dine_in' ? widget.tableNumber : null,
+      // Null means ASAP; the server re-validates whatever's sent against
+      // its own prep-time and hours logic regardless (resolveDesiredReadyAt).
+      'desiredReadyAt':
+          _fulfillmentType == 'dine_in' ? null : _selectedReadyAt,
       // Only the code goes over the wire - the server resolves the actual
       // discount, so there's nothing here a client could inflate.
       'couponCode': _couponController.text.trim().isEmpty
@@ -236,6 +276,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
       if (response.statusCode == 201 || response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final newOrderId = data['order']?['id']?.toString();
+        // From the server's own record, not the client's selection - that's
+        // what was actually confirmed and stored.
+        final confirmedReadyAt = data['order']?['desired_ready_at']?.toString();
 
         if (mounted) {
           context.read<CartController>().clear();
@@ -279,6 +322,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         setState(() {
           _isSubmitting = false;
           _orderId = newOrderId;
+          _confirmedReadyAt = confirmedReadyAt;
           _paymentFailed = paymentFailed;
           _paymentError = paymentError;
         });
@@ -318,6 +362,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     if (_orderId != null) {
       return _OrderSuccessSection(
         orderId: _orderId!,
+        confirmedReadyAt: _confirmedReadyAt,
         paymentFailed: _paymentFailed,
         paymentError: _paymentError,
       );
@@ -483,6 +528,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
                             ),
                           ],
                         ),
+                      ),
+                    ],
+                    if (widget.tableNumber == null) ...[
+                      const SizedBox(height: 20),
+                      PickupTimeSelector(
+                        pickupSlots: _pickupSlots,
+                        loading: _loadingPickupSlots,
+                        selectedReadyAt: _selectedReadyAt,
+                        onSelect: (value) =>
+                            setState(() => _selectedReadyAt = value),
                       ),
                     ],
                     const SizedBox(height: 28),
@@ -758,14 +813,25 @@ class _SummaryStat extends StatelessWidget {
 
 class _OrderSuccessSection extends StatelessWidget {
   final String orderId;
+  final String? confirmedReadyAt;
   final bool paymentFailed;
   final String? paymentError;
 
   const _OrderSuccessSection({
     required this.orderId,
+    this.confirmedReadyAt,
     this.paymentFailed = false,
     this.paymentError,
   });
+
+  String _formatReadyAt(String iso) {
+    final parsed = DateTime.tryParse(iso);
+    if (parsed == null) return iso;
+    final local = parsed.toLocal();
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -811,6 +877,17 @@ class _OrderSuccessSection extends StatelessWidget {
                       style: const TextStyle(
                         fontSize: 16,
                         color: Color(0xFF625D5A),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      confirmedReadyAt != null
+                          ? 'Ready by ${_formatReadyAt(confirmedReadyAt!)}'
+                          : "We'll have it ready as soon as possible.",
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.deepOrange,
                       ),
                     ),
                     const SizedBox(height: 24),

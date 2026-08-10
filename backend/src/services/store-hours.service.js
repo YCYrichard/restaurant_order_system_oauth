@@ -137,9 +137,96 @@ async function getStoreOpenState(store, at = new Date()) {
   };
 }
 
+/// Converts "this many local wall-clock minutes-of-day, today" into the UTC
+/// instant that represents - anchored to the already-known-good instant
+/// `at` rather than reconstructing a date from scratch, so this is just
+/// "move `at` forward/back by the wall-clock difference." Correct as long
+/// as both instants fall in the same local calendar day (no DST jump
+/// between them), which holds for every slot this generates - all "today."
+function utcInstantForLocalMinutesToday(timezone, at, targetMinutes) {
+  const local = localTimeIn(timezone, at);
+  return new Date(at.getTime() + (targetMinutes - local.minutes) * 60000);
+}
+
+/// Ready-by pickup slots for the rest of today, spaced every `stepMinutes`
+/// starting at the store's own minimum prep time from now, rounded up to
+/// the next boundary. Scoped to today only - offering tomorrow's slots
+/// needs capacity rules to mean anything, which is a deliberately separate
+/// feature.
+async function getPickupSlots(store, at = new Date(), { stepMinutes = 15, maxSlots = 32 } = {}) {
+  const timezone = store.timezone || 'Asia/Taipei';
+  const minPrepMinutes = Number(store.min_prep_minutes) || 0;
+  const openState = await getStoreOpenState(store, at);
+
+  if (!openState.isOpen) {
+    // No slots for a store that isn't accepting orders right now at all -
+    // createOrder already rejects this case outright, so a slot list here
+    // would just be an offer the order will bounce off of.
+    return {
+      timezone,
+      minPrepMinutes,
+      isOpen: false,
+      reason: openState.reason,
+      asapReadyAt: null,
+      slots: [],
+    };
+  }
+
+  const local = localTimeIn(timezone, at);
+  const earliestMinutes =
+    Math.ceil((local.minutes + minPrepMinutes) / stepMinutes) * stepMinutes;
+  const asapReadyAt = utcInstantForLocalMinutesToday(
+    timezone,
+    at,
+    local.minutes + minPrepMinutes
+  );
+
+  // A window crossing midnight (open until 02:00) technically closes
+  // tomorrow - slots stay within today's calendar day regardless, so the
+  // effective boundary is end-of-day rather than that later closing time.
+  let closeMinutes = 24 * 60;
+
+  if (openState.todayHours) {
+    const [closeHour, closeMinute] = openState.todayHours.close
+      .split(':')
+      .map(Number);
+    const configuredClose = closeHour * 60 + closeMinute;
+
+    if (configuredClose > local.minutes) {
+      closeMinutes = configuredClose;
+    }
+  }
+
+  const slots = [];
+
+  for (
+    let minutes = earliestMinutes;
+    minutes < closeMinutes && slots.length < maxSlots;
+    minutes += stepMinutes
+  ) {
+    const hour = Math.floor(minutes / 60);
+    const minute = minutes % 60;
+
+    slots.push({
+      label: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+      readyAt: utcInstantForLocalMinutesToday(timezone, at, minutes).toISOString(),
+    });
+  }
+
+  return {
+    timezone,
+    minPrepMinutes,
+    isOpen: true,
+    reason: slots.length === 0 ? 'No pickup times left before closing.' : null,
+    asapReadyAt: asapReadyAt.toISOString(),
+    slots,
+  };
+}
+
 module.exports = {
   DAY_NAMES,
   localTimeIn,
   isWithinWindow,
   getStoreOpenState,
+  getPickupSlots,
 };

@@ -33,6 +33,19 @@ exports.listPublicStores = async (req, res, next) => {
   }
 };
 
+// Public, unauthenticated - same reasoning as listPublicStores: the
+// checkout page needs this before there's any reason to be signed in.
+exports.getPickupSlots = async (req, res, next) => {
+  try {
+    const storeId = Number(req.params.storeId);
+    const slots = await storesService.getPickupSlots(storeId);
+
+    res.status(200).json(slots);
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.getStore = async (req, res, next) => {
   try {
     const storeId = Number(req.params.storeId);

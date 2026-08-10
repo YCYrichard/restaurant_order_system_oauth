@@ -37,6 +37,8 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
   final _taxRateController = TextEditingController(text: '0');
   bool _taxInclusive = true;
 
+  final _minPrepController = TextEditingController(text: '15');
+
   bool _loading = false;
   bool _saving = false;
   String? _message;
@@ -52,6 +54,7 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
   @override
   void dispose() {
     _taxRateController.dispose();
+    _minPrepController.dispose();
     super.dispose();
   }
 
@@ -78,11 +81,17 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
     final storeId = widget.selectedStore?['id'];
     if (storeId == null) return;
 
-    // Tax comes from the store record already loaded by the admin page.
+    // Tax and prep time come from the store record already loaded by the
+    // admin page.
     final rate = double.tryParse('${widget.selectedStore?['tax_rate'] ?? 0}') ?? 0;
     _taxRateController.text = (rate * 100).toStringAsFixed(2);
     _taxInclusive = widget.selectedStore?['tax_inclusive'] != 0 &&
         widget.selectedStore?['tax_inclusive'] != false;
+
+    final minPrep =
+        int.tryParse('${widget.selectedStore?['min_prep_minutes'] ?? 15}') ??
+            15;
+    _minPrepController.text = '$minPrep';
 
     setState(() => _loading = true);
 
@@ -206,6 +215,39 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
       _showMessage('Tax settings saved.');
     } else {
       _showMessage('Failed to save tax settings.', isError: true);
+    }
+  }
+
+  /// Also lives on the store record, alongside tax - saved the same way.
+  Future<void> _savePrepTime() async {
+    final store = widget.selectedStore;
+    if (store == null) return;
+
+    final minutes = int.tryParse(_minPrepController.text.trim());
+
+    if (minutes == null || minutes < 0 || minutes > 240) {
+      _showMessage(
+        'Prep time must be a whole number of minutes (0-240).',
+        isError: true,
+      );
+      return;
+    }
+
+    final response = await _auth.authorizedRequest(
+      'PUT',
+      '/stores/${store['id']}',
+      body: {
+        'name': store['name'],
+        'address': store['address'],
+        'phone': store['phone'],
+        'minPrepMinutes': minutes,
+      },
+    );
+
+    if (response.statusCode == 200) {
+      _showMessage('Prep time saved.');
+    } else {
+      _showMessage('Failed to save prep time.', isError: true);
     }
   }
 
@@ -525,6 +567,40 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
                   FilledButton(
                     onPressed: _saveTax,
                     child: const Text('Save tax'),
+                  ),
+                ],
+              ),
+
+              const Divider(height: 32),
+              const Text(
+                'Pickup prep time',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'The earliest a customer can choose to have their order '
+                'ready is now plus this many minutes. ASAP orders use this '
+                'as their estimate too.',
+                style: TextStyle(fontSize: 12, color: Color(0xFF77716D)),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  SizedBox(
+                    width: 160,
+                    child: TextField(
+                      controller: _minPrepController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Minutes',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  FilledButton(
+                    onPressed: _savePrepTime,
+                    child: const Text('Save prep time'),
                   ),
                 ],
               ),

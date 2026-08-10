@@ -29,6 +29,12 @@ router.get(
   controller.listPublicStores
 );
 
+// Public: checkout needs this before there's any reason to be signed in.
+router.get(
+  '/:storeId/pickup-slots',
+  controller.getPickupSlots
+);
+
 router.get(
   '/:storeId',
   requireAuth,

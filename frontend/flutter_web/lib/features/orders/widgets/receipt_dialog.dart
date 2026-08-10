@@ -195,6 +195,14 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
     String money(Object? value) =>
         '\$${(double.tryParse('$value') ?? 0).toStringAsFixed(2)}';
 
+    String formatLocalTime(String iso) {
+      final parsed = DateTime.tryParse(iso);
+      if (parsed == null) return iso;
+      final local = parsed.toLocal();
+      return '${local.hour.toString().padLeft(2, '0')}:'
+          '${local.minute.toString().padLeft(2, '0')}';
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -208,6 +216,15 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
           '${order['table_number'] != null ? ' · table ${order['table_number']}' : ''}',
           style: const TextStyle(fontSize: 12, color: Color(0xFF77716D)),
         ),
+        if (order['desired_ready_at'] != null)
+          Text(
+            'Ready by ${formatLocalTime(order['desired_ready_at'].toString())}',
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: Colors.deepOrange,
+            ),
+          ),
         const Divider(height: 20),
         ...items.map((item) {
           final mods = item['modifiers'] is List

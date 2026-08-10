@@ -220,6 +220,63 @@ async function resolvePricedItems(storeId, items) {
   });
 }
 
+/// Resolves the customer's requested ready time into either null (ASAP, the
+/// common case) or a validated Date. Enforced here, not just in the picker
+/// UI, for the same reason store-hours enforcement isn't decorative: a
+/// direct POST could otherwise promise a time the kitchen never agreed to.
+function resolveDesiredReadyAt(store, openState, rawValue, at = new Date()) {
+  if (rawValue === undefined || rawValue === null || rawValue === '') {
+    return null;
+  }
+
+  const desired = new Date(rawValue);
+
+  if (Number.isNaN(desired.getTime())) {
+    throw new OrderValidationError('desiredReadyAt must be a valid date/time');
+  }
+
+  const minPrepMinutes = Number(store.min_prep_minutes) || 0;
+  const earliest = new Date(at.getTime() + minPrepMinutes * 60000);
+
+  if (desired.getTime() < earliest.getTime()) {
+    throw new OrderValidationError(
+      `${store.name} needs at least ${minPrepMinutes} minutes to prepare an order - the earliest ready time is ${earliest.toISOString()}.`
+    );
+  }
+
+  const timezone = store.timezone || 'Asia/Taipei';
+  const nowLocal = storeHoursService.localTimeIn(timezone, at);
+  const desiredLocal = storeHoursService.localTimeIn(timezone, desired);
+
+  // Scheduling for another day needs capacity rules to mean anything -
+  // deliberately out of scope for now, so only later today is accepted.
+  if (desiredLocal.isoDate !== nowLocal.isoDate) {
+    throw new OrderValidationError(
+      'desiredReadyAt must be later today - scheduling for another day is not supported yet.'
+    );
+  }
+
+  if (openState.todayHours) {
+    const [closeHour, closeMinute] = openState.todayHours.close
+      .split(':')
+      .map(Number);
+    const configuredClose = closeHour * 60 + closeMinute;
+
+    // A window crossing midnight closes tomorrow, not today - the same
+    // end-of-day simplification store-hours.service.getPickupSlots uses.
+    if (
+      configuredClose > nowLocal.minutes &&
+      desiredLocal.minutes > configuredClose
+    ) {
+      throw new OrderValidationError(
+        `${store.name} closes at ${openState.todayHours.close} today - please choose an earlier time.`
+      );
+    }
+  }
+
+  return desired;
+}
+
 async function createOrder(input) {
   validateCreateOrderInput(input);
 
@@ -252,6 +309,12 @@ async function createOrder(input) {
       `${store.name} is not accepting orders right now. ${openState.reason ?? ''}`.trim()
     );
   }
+
+  const desiredReadyAt = resolveDesiredReadyAt(
+    store,
+    openState,
+    input.desiredReadyAt
+  );
 
   // Priced from the database before the transaction opens - a stale cart
   // should fail fast without holding a connection.
@@ -329,6 +392,7 @@ async function createOrder(input) {
         deliveryAddress: null,
         tableNumber:
           fulfillmentType === 'dine_in' ? Number(tableNumber) : null,
+        desiredReadyAt,
       },
       connection
     );

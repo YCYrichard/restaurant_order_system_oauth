@@ -130,6 +130,14 @@ class _OrdersPanelState extends State<OrdersPanel> {
     return _statusFlow[index + 1];
   }
 
+  String _formatReadyTime(String iso) {
+    final parsed = DateTime.tryParse(iso);
+    if (parsed == null) return iso;
+    final local = parsed.toLocal();
+    return '${local.hour.toString().padLeft(2, '0')}:'
+        '${local.minute.toString().padLeft(2, '0')}';
+  }
+
   Color _statusColor(String status) {
     switch (status) {
       case 'pending':
@@ -326,12 +334,15 @@ class _OrdersPanelState extends State<OrdersPanel> {
                 Expanded(
                   child: Text(
                     switch (fulfillmentType) {
-                      'delivery' =>
-                        'Delivery — ${order['delivery_address'] ?? 'no address'}',
-                      'dine_in' =>
-                        'Dine in — table ${order['table_number'] ?? '?'}',
-                      _ => 'Pickup',
-                    },
+                          'delivery' =>
+                            'Delivery — ${order['delivery_address'] ?? 'no address'}',
+                          'dine_in' =>
+                            'Dine in — table ${order['table_number'] ?? '?'}',
+                          _ => 'Pickup',
+                        } +
+                        (order['desired_ready_at'] != null
+                            ? ' · Ready by ${_formatReadyTime(order['desired_ready_at'].toString())}'
+                            : ''),
                     style: const TextStyle(
                       fontSize: 12,
                       color: Color(0xFF625D5A),

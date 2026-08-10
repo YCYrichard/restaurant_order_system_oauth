@@ -119,6 +119,7 @@ GoRouter buildAppRouter(AuthController authController) {
             tableNumber: tableNumber != null && tableNumber > 0
                 ? tableNumber
                 : null,
+            initialReadyAt: state.uri.queryParameters['readyAt'],
           );
         },
       ),

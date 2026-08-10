@@ -196,6 +196,12 @@ async function updateStore(storeId, fields) {
     params.push(fields.taxInclusive ? 1 : 0);
   }
 
+  // Only touch this when the caller actually supplied it, same reasoning.
+  if (fields.minPrepMinutes !== undefined) {
+    assignments.push('min_prep_minutes = ?');
+    params.push(fields.minPrepMinutes);
+  }
+
   params.push(storeId);
 
   const [result] = await db.execute(

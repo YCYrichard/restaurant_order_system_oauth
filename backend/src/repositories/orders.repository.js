@@ -8,9 +8,9 @@ async function insertOrder(order, connection = db) {
         user_id, store_id, total, subtotal, tax_amount, tax_rate,
         tax_inclusive, discount_amount, coupon_code,
         customer_name, customer_phone, customer_email, notes,
-        fulfillment_type, delivery_address, table_number
+        fulfillment_type, delivery_address, table_number, desired_ready_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       order.userId || null,
@@ -29,6 +29,7 @@ async function insertOrder(order, connection = db) {
       order.fulfillmentType || 'pickup',
       order.deliveryAddress || null,
       order.tableNumber || null,
+      order.desiredReadyAt || null,
     ]
   );
 

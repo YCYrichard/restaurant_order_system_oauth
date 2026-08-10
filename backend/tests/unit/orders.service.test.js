@@ -6,7 +6,14 @@ jest.mock('../../src/repositories/orders.repository');
 jest.mock('../../src/repositories/products.repository');
 jest.mock('../../src/repositories/modifiers.repository');
 jest.mock('../../src/repositories/stores.repository');
-jest.mock('../../src/services/store-hours.service');
+jest.mock('../../src/services/store-hours.service', () => {
+  const actual = jest.requireActual('../../src/services/store-hours.service');
+  // localTimeIn is a pure timezone calculation - kept real so
+  // resolveDesiredReadyAt's own date-math tests are genuinely exercised,
+  // not just asserting against another mock. getStoreOpenState stays
+  // mocked, as every existing test here already relies on controlling it.
+  return { ...actual, getStoreOpenState: jest.fn() };
+});
 jest.mock('../../src/repositories/coupons.repository');
 jest.mock('../../src/services/events.service');
 jest.mock('../../src/services/payments.service');
@@ -342,6 +349,163 @@ describe('orders.service.createOrder fulfillment + item notes', () => {
     expect(ordersRepository.insertOrderItems).toHaveBeenCalledWith(
       42,
       [expect.objectContaining({ productId: 1, notes: 'No onions' })],
+      mockConnection
+    );
+  });
+});
+
+describe('orders.service.createOrder desired ready time', () => {
+  let mockConnection;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockCatalog();
+    jest.useFakeTimers();
+    // 10:30 Monday in Taipei - comfortably clear of any local midnight
+    // boundary, so date-math around it isn't flaky.
+    jest.setSystemTime(new Date('2026-08-10T02:30:00Z'));
+
+    storesRepository.findStoreById.mockResolvedValue({
+      id: 1,
+      name: 'Test Store',
+      timezone: 'Asia/Taipei',
+      min_prep_minutes: 15,
+    });
+
+    mockConnection = {
+      beginTransaction: jest.fn().mockResolvedValue(undefined),
+      commit: jest.fn().mockResolvedValue(undefined),
+      rollback: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn(),
+    };
+
+    db.getConnection.mockResolvedValue(mockConnection);
+    ordersRepository.insertOrder.mockResolvedValue(42);
+    ordersRepository.insertOrderItems.mockResolvedValue([1001]);
+    ordersRepository.findOrderWithItems.mockResolvedValue({ id: 42 });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('defaults to ASAP (null) when not specified', async () => {
+    storeHoursService.getStoreOpenState.mockResolvedValue({
+      isOpen: true,
+      reason: null,
+      todayHours: null,
+    });
+
+    await ordersService.createOrder(validInput);
+
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ desiredReadyAt: null }),
+      mockConnection
+    );
+  });
+
+  test('rejects a time earlier than the store\'s minimum prep window', async () => {
+    storeHoursService.getStoreOpenState.mockResolvedValue({
+      isOpen: true,
+      reason: null,
+      todayHours: null,
+    });
+
+    await expect(
+      ordersService.createOrder({
+        ...validInput,
+        // 1 second from now - nowhere close to the 15-minute minimum.
+        desiredReadyAt: new Date(Date.now() + 1000).toISOString(),
+      })
+    ).rejects.toThrow(/needs at least 15 minutes/);
+
+    expect(db.getConnection).not.toHaveBeenCalled();
+  });
+
+  test('rejects a malformed date', async () => {
+    storeHoursService.getStoreOpenState.mockResolvedValue({
+      isOpen: true,
+      reason: null,
+      todayHours: null,
+    });
+
+    await expect(
+      ordersService.createOrder({ ...validInput, desiredReadyAt: 'not-a-date' })
+    ).rejects.toThrow(/must be a valid date/);
+  });
+
+  test('accepts a time after the prep window, within an unbounded (always-open) day', async () => {
+    storeHoursService.getStoreOpenState.mockResolvedValue({
+      isOpen: true,
+      reason: null,
+      todayHours: null,
+    });
+
+    const readyAt = new Date(Date.now() + 30 * 60000); // 30 min from now
+
+    await ordersService.createOrder({
+      ...validInput,
+      desiredReadyAt: readyAt.toISOString(),
+    });
+
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ desiredReadyAt: readyAt }),
+      mockConnection
+    );
+  });
+
+  test('rejects scheduling for a different calendar day', async () => {
+    storeHoursService.getStoreOpenState.mockResolvedValue({
+      isOpen: true,
+      reason: null,
+      todayHours: null,
+    });
+
+    // Now is 10:30 Monday Taipei - 20 hours out lands on Tuesday.
+    const tomorrow = new Date(Date.now() + 20 * 60 * 60000);
+
+    await expect(
+      ordersService.createOrder({
+        ...validInput,
+        desiredReadyAt: tomorrow.toISOString(),
+      })
+    ).rejects.toThrow(/later today/);
+  });
+
+  test('rejects a time after closing', async () => {
+    storeHoursService.getStoreOpenState.mockResolvedValue({
+      isOpen: true,
+      reason: null,
+      todayHours: { open: '09:00', close: '11:00' },
+    });
+
+    // Now is 10:30 Taipei; 11:15 is after the 11:00 close.
+    const afterClose = new Date('2026-08-10T03:15:00Z');
+
+    await expect(
+      ordersService.createOrder({
+        ...validInput,
+        desiredReadyAt: afterClose.toISOString(),
+      })
+    ).rejects.toThrow(/closes at 11:00 today/);
+  });
+
+  test('accepts a time at or before closing', async () => {
+    storeHoursService.getStoreOpenState.mockResolvedValue({
+      isOpen: true,
+      reason: null,
+      todayHours: { open: '09:00', close: '17:00' },
+    });
+
+    const readyAt = new Date('2026-08-10T08:00:00Z'); // 16:00 Taipei
+
+    await ordersService.createOrder({
+      ...validInput,
+      desiredReadyAt: readyAt.toISOString(),
+    });
+
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ desiredReadyAt: readyAt }),
       mockConnection
     );
   });

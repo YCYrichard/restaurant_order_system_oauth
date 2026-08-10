@@ -6,6 +6,7 @@ import '../core/api/api_client.dart';
 import '../core/auth/auth_controller.dart';
 import '../features/cart/cart_controller.dart';
 import '../features/cart/widgets/cart_summary_section.dart';
+import '../features/checkout/widgets/pickup_time_selector.dart';
 import '../features/menu/data/menu_repository.dart';
 import '../features/menu/widgets/menu_products_section.dart';
 import '../features/menu/widgets/option_picker_sheet.dart';
@@ -38,6 +39,11 @@ class _HomePageState extends State<HomePage> {
   bool _loadingMenu = false;
   String? _menuError;
 
+  Map<String, dynamic>? _pickupSlots;
+  bool _loadingPickupSlots = true;
+  // Null means ASAP - the common case, and the default.
+  String? _selectedReadyAt;
+
   @override
   void initState() {
     super.initState();
@@ -45,6 +51,7 @@ class _HomePageState extends State<HomePage> {
 
     if (widget.storeId != null) {
       _loadMenu(widget.storeId!);
+      _loadPickupSlots(widget.storeId!);
     }
   }
 
@@ -144,6 +151,27 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _loadPickupSlots(int storeId) async {
+    setState(() => _loadingPickupSlots = true);
+
+    try {
+      final decoded = await ApiClient.getJson('/stores/$storeId/pickup-slots');
+
+      if (!mounted) return;
+
+      setState(() {
+        _pickupSlots = Map<String, dynamic>.from(decoded);
+        _loadingPickupSlots = false;
+      });
+    } catch (_) {
+      // ASAP still works even if this failed to load - it's the server
+      // default when no desiredReadyAt is sent, so there's nothing to
+      // block on here.
+      if (!mounted) return;
+      setState(() => _loadingPickupSlots = false);
+    }
+  }
+
   Future<void> _addToCart(Product product) async {
     var chosen = const <ModifierOption>[];
 
@@ -220,8 +248,11 @@ class _HomePageState extends State<HomePage> {
 
     final tableParam =
         widget.tableNumber != null ? '&table=${widget.tableNumber}' : '';
+    final readyAtParam = _selectedReadyAt != null
+        ? '&readyAt=${Uri.encodeComponent(_selectedReadyAt!)}'
+        : '';
 
-    context.push('/checkout?storeId=${widget.storeId}$tableParam');
+    context.push('/checkout?storeId=${widget.storeId}$tableParam$readyAtParam');
   }
 
   void _goToLogin() {
@@ -317,6 +348,28 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                   ],
+                ),
+              ),
+            // Dine-in via table QR is brought to the table, not picked up
+            // at a chosen time - the selector only applies to pickup.
+            if (widget.tableNumber == null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1200),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: PickupTimeSelector(
+                        pickupSlots: _pickupSlots,
+                        loading: _loadingPickupSlots,
+                        selectedReadyAt: _selectedReadyAt,
+                        onSelect: (value) =>
+                            setState(() => _selectedReadyAt = value),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             if (_loadingMenu)
