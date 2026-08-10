@@ -128,6 +128,15 @@ async function getStoreAccessForUser(userId) {
   return usersRepository.findStoreAccessForUser(userId);
 }
 
+// A grant only ever promotes a plain customer up to staff-tier - it never
+// touches an existing admin/owner/staff role, so it can't clobber a
+// deliberately-configured local staff account or demote an admin. Owner and
+// manager both land on the back-office ('owner'); plain staff stays
+// kitchen-only.
+function staffTierRoleFor(accessRole) {
+  return accessRole === 'staff' ? 'staff' : 'owner';
+}
+
 async function grantStoreAccess(userId, { storeId, accessRole }) {
   const parsedStoreId = Number(storeId);
 
@@ -141,7 +150,7 @@ async function grantStoreAccess(userId, { storeId, accessRole }) {
     );
   }
 
-  await requireUser(userId);
+  const user = await requireUser(userId);
 
   const store = await storesRepository.findStoreById(parsedStoreId);
   if (!store) {
@@ -149,6 +158,13 @@ async function grantStoreAccess(userId, { storeId, accessRole }) {
   }
 
   await usersRepository.grantStoreAccess(userId, parsedStoreId, accessRole);
+
+  // OAuth signups are permanently 'customer' until something promotes them -
+  // granting store access is that trigger, otherwise the JWT this user gets
+  // next login never reflects the access we just granted.
+  if (user.role === 'customer') {
+    await usersRepository.updateUserRole(userId, staffTierRoleFor(accessRole));
+  }
 
   return usersRepository.findStoreAccessForUser(userId);
 }

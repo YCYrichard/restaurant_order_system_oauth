@@ -91,6 +91,17 @@ async function grantStoreAccess(userId, storeId, accessRole) {
   );
 }
 
+async function updateUserRole(userId, role) {
+  await db.execute(
+    `
+      UPDATE users
+      SET role = ?
+      WHERE id = ?
+    `,
+    [role, userId]
+  );
+}
+
 async function revokeStoreAccess(userId, storeId) {
   const [result] = await db.execute(
     `
@@ -130,5 +141,6 @@ module.exports = {
   insertLocalUser,
   findStoreAccessForUser,
   grantStoreAccess,
+  updateUserRole,
   revokeStoreAccess,
 };

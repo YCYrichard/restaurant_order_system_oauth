@@ -256,6 +256,77 @@ describe('POST /api/v1/users/:userId/store-access', () => {
     expect(res.status).toBe(201);
     expect(res.body.storeAccess).toHaveLength(1);
   });
+
+  test('promotes a customer to owner when granted owner access', async () => {
+    db.execute
+      .mockResolvedValueOnce([[{ id: 2, role: 'customer' }]]) // requireUser
+      .mockResolvedValueOnce([[{ id: 1 }]]) // findStoreById
+      .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
+      .mockResolvedValueOnce([{}]) // UPDATE users SET role
+      .mockResolvedValueOnce([
+        [{ id: 5, store_id: 1, access_role: 'owner', store_name: 'Demo Store' }],
+      ]);
+
+    const res = await request(app)
+      .post('/api/v1/users/2/store-access')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ storeId: 1, accessRole: 'owner' });
+
+    expect(res.status).toBe(201);
+    expect(db.execute).toHaveBeenCalledTimes(5);
+    expect(db.execute.mock.calls[3][0]).toMatch(/UPDATE users/);
+    expect(db.execute.mock.calls[3][1]).toEqual(['owner', 2]);
+  });
+
+  test('promotes a customer to owner when granted manager access', async () => {
+    db.execute
+      .mockResolvedValueOnce([[{ id: 2, role: 'customer' }]]) // requireUser
+      .mockResolvedValueOnce([[{ id: 1 }]]) // findStoreById
+      .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
+      .mockResolvedValueOnce([{}]) // UPDATE users SET role
+      .mockResolvedValueOnce([[]]);
+
+    const res = await request(app)
+      .post('/api/v1/users/2/store-access')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ storeId: 1, accessRole: 'manager' });
+
+    expect(res.status).toBe(201);
+    expect(db.execute.mock.calls[3][1]).toEqual(['owner', 2]);
+  });
+
+  test('promotes a customer to staff when granted staff access', async () => {
+    db.execute
+      .mockResolvedValueOnce([[{ id: 2, role: 'customer' }]]) // requireUser
+      .mockResolvedValueOnce([[{ id: 1 }]]) // findStoreById
+      .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
+      .mockResolvedValueOnce([{}]) // UPDATE users SET role
+      .mockResolvedValueOnce([[]]);
+
+    const res = await request(app)
+      .post('/api/v1/users/2/store-access')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ storeId: 1, accessRole: 'staff' });
+
+    expect(res.status).toBe(201);
+    expect(db.execute.mock.calls[3][1]).toEqual(['staff', 2]);
+  });
+
+  test('does not touch role for a user who is already staff-tier', async () => {
+    db.execute
+      .mockResolvedValueOnce([[{ id: 2, role: 'owner' }]]) // requireUser
+      .mockResolvedValueOnce([[{ id: 1 }]]) // findStoreById
+      .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
+      .mockResolvedValueOnce([[]]);
+
+    const res = await request(app)
+      .post('/api/v1/users/2/store-access')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ storeId: 1, accessRole: 'staff' });
+
+    expect(res.status).toBe(201);
+    expect(db.execute).toHaveBeenCalledTimes(4);
+  });
 });
 
 describe('DELETE /api/v1/users/:userId/store-access/:storeId', () => {
