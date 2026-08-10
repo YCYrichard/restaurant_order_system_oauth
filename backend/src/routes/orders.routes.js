@@ -1,12 +1,15 @@
 const router = require('express').Router();
 const controller = require('../controllers/orders.controller');
+const paymentsController = require('../controllers/payments.controller');
 const {
   requireAuth,
   requireStoreAccess,
 } = require('../middleware/auth.middleware');
 
-// Guest checkout is intentional: no auth required to place an order.
+// Guest checkout is intentional: no auth required to place an order, and
+// for the same reason paying for one needs no account either.
 router.post('/', controller.createOrder);
+router.post('/:orderId/payments', paymentsController.payOrder);
 router.get('/user/:userId', requireAuth, controller.getUserOrders);
 
 // Store-scoped listing for admin/staff order management. storeId is in the

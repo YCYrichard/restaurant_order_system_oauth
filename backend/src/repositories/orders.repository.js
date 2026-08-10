@@ -226,10 +226,18 @@ async function findOrdersByUser(userId) {
 async function insertRefund(refund) {
   const [result] = await db.execute(
     `
-      INSERT INTO order_refunds (order_id, amount, reason, created_by)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO order_refunds (
+        order_id, amount, reason, provider_transaction_id, created_by
+      )
+      VALUES (?, ?, ?, ?, ?)
     `,
-    [refund.orderId, refund.amount, refund.reason || null, refund.createdBy || null]
+    [
+      refund.orderId,
+      refund.amount,
+      refund.reason || null,
+      refund.providerTransactionId || null,
+      refund.createdBy || null,
+    ]
   );
 
   return result.insertId;
@@ -238,7 +246,7 @@ async function insertRefund(refund) {
 async function findRefundsForOrder(orderId) {
   const [rows] = await db.execute(
     `
-      SELECT id, amount, reason, created_by, created_at
+      SELECT id, amount, reason, provider_transaction_id, created_by, created_at
       FROM order_refunds
       WHERE order_id = ?
       ORDER BY created_at ASC

@@ -42,6 +42,28 @@ class ApiClient {
     return _decode(response);
   }
 
+  static Future<dynamic> postJson(String path, Map<String, dynamic> body) async {
+    final http.Response response;
+
+    try {
+      response = await http.post(
+        Uri.parse('$apiBaseUrl$path'),
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(body),
+      );
+    } catch (_) {
+      throw ApiException(
+        statusCode: 0,
+        message: 'Unable to connect to the server. Please try again.',
+      );
+    }
+
+    return _decode(response);
+  }
+
   static dynamic _decode(http.Response response) {
     dynamic decoded;
 

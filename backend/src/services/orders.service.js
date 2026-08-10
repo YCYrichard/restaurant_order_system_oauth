@@ -8,6 +8,7 @@ const modifiersRepository = require('../repositories/modifiers.repository');
 const modifiersService = require('./modifiers.service');
 const couponsRepository = require('../repositories/coupons.repository');
 const couponsService = require('./coupons.service');
+const paymentsService = require('./payments.service');
 const eventsService = require('./events.service');
 
 const TOTAL_TOLERANCE = 0.01;
@@ -481,7 +482,11 @@ async function getReceipt(orderId, user) {
     }
   }
 
-  const refunds = await ordersRepository.findRefundsForOrder(orderId);
+  const [refunds, payments] = await Promise.all([
+    ordersRepository.findRefundsForOrder(orderId),
+    paymentsService.getPaymentsForOrder(orderId),
+  ]);
+
   const refundedTotal = refunds.reduce(
     (sum, refund) => sum + Number(refund.amount),
     0
@@ -490,6 +495,7 @@ async function getReceipt(orderId, user) {
   return {
     order,
     refunds,
+    payments,
     totals: {
       subtotal: Number(order.subtotal),
       discount: Number(order.discount_amount),
@@ -503,9 +509,12 @@ async function getReceipt(orderId, user) {
   };
 }
 
-/// Records a refund against an order. This is a record only - no money
-/// moves, because no payment provider is wired up yet. Once one is, this is
-/// where the gateway call belongs.
+/// Records a refund against an order, and sends it to the gateway when the
+/// order was actually charged through one.
+///
+/// Orders paid in cash (or placed before payments existed) have no gateway
+/// transaction; those are still recorded, because the money moved at the
+/// counter and refusing to write it down would leave the books wrong.
 async function refundOrder(orderId, user, { amount, reason }) {
   const order = await resolveOrderAccess(orderId, user);
 
@@ -524,11 +533,20 @@ async function refundOrder(orderId, user, { amount, reason }) {
     );
   }
 
+  // Gateway first: if the refund is rejected there, recording it locally
+  // would tell the store money went back that never did. A null result means
+  // there was no gateway charge to reverse, which is not a failure.
+  const gatewayResult = await paymentsService.refundPayment(
+    orderId,
+    roundMoney(parsedAmount)
+  );
+
   await ordersRepository.insertRefund({
     orderId,
     amount: roundMoney(parsedAmount),
     reason,
     createdBy: user?.id ?? null,
+    providerTransactionId: gatewayResult?.providerTransactionId ?? null,
   });
 
   return getReceipt(orderId, user);

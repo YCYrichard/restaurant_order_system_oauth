@@ -9,6 +9,7 @@ jest.mock('../../src/repositories/stores.repository');
 jest.mock('../../src/services/store-hours.service');
 jest.mock('../../src/repositories/coupons.repository');
 jest.mock('../../src/services/events.service');
+jest.mock('../../src/services/payments.service');
 jest.mock('../../src/services/coupons.service', () => {
   const actual = jest.requireActual('../../src/services/coupons.service');
   return { ...actual, resolveDiscount: jest.fn() };
@@ -23,6 +24,7 @@ const storeHoursService = require('../../src/services/store-hours.service');
 const couponsRepository = require('../../src/repositories/coupons.repository');
 const couponsService = require('../../src/services/coupons.service');
 const eventsService = require('../../src/services/events.service');
+const paymentsService = require('../../src/services/payments.service');
 const ordersService = require('../../src/services/orders.service');
 
 const validInput = {
@@ -731,5 +733,150 @@ describe('orders.service.listOrdersForStore', () => {
     expect(ordersRepository.findOrdersByStore).toHaveBeenCalledWith(10, {
       activeOnly: true,
     });
+  });
+});
+
+describe('orders.service.getReceipt', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const order = {
+    id: 5,
+    store_id: 10,
+    user_id: 2,
+    subtotal: '20.00',
+    discount_amount: '0.00',
+    tax_amount: '1.00',
+    tax_rate: '0.05',
+    tax_inclusive: 1,
+    total: '20.00',
+  };
+
+  test('is readable by the ordering customer', async () => {
+    ordersRepository.findOrderWithItems.mockResolvedValue(order);
+    ordersRepository.findRefundsForOrder.mockResolvedValue([]);
+    paymentsService.getPaymentsForOrder.mockResolvedValue([]);
+
+    const receipt = await ordersService.getReceipt(5, { id: 2, role: 'customer' });
+
+    expect(receipt.totals.total).toBe(20);
+    expect(receipt.payments).toEqual([]);
+  });
+
+  test('denies a customer who does not own the order and has no store access', async () => {
+    ordersRepository.findOrderWithItems.mockResolvedValue(order);
+    ordersRepository.hasStoreAccess.mockResolvedValue(false);
+
+    await expect(
+      ordersService.getReceipt(5, { id: 99, role: 'customer' })
+    ).rejects.toThrow(ordersService.OrderAccessDeniedError);
+  });
+
+  test('is readable by staff with store access even if not the buyer', async () => {
+    ordersRepository.findOrderWithItems.mockResolvedValue(order);
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+    ordersRepository.findRefundsForOrder.mockResolvedValue([]);
+    paymentsService.getPaymentsForOrder.mockResolvedValue([]);
+
+    await expect(
+      ordersService.getReceipt(5, { id: 99, role: 'staff' })
+    ).resolves.toMatchObject({ order });
+  });
+
+  test('includes payments and nets out refunds', async () => {
+    ordersRepository.findOrderWithItems.mockResolvedValue(order);
+    ordersRepository.findRefundsForOrder.mockResolvedValue([
+      { id: 1, amount: '5.00' },
+    ]);
+    paymentsService.getPaymentsForOrder.mockResolvedValue([
+      { id: 1, provider: 'tappay', status: 'paid', amount: '20.00' },
+    ]);
+
+    const receipt = await ordersService.getReceipt(5, { id: 2, role: 'customer' });
+
+    expect(receipt.totals.refunded).toBe(5);
+    expect(receipt.totals.net).toBe(15);
+    expect(receipt.payments).toHaveLength(1);
+  });
+});
+
+describe('orders.service.refundOrder', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const order = {
+    id: 5,
+    store_id: 10,
+    user_id: 2,
+    status: 'completed',
+    total: '20.00',
+    subtotal: '20.00',
+    discount_amount: '0.00',
+    tax_amount: '1.00',
+    tax_rate: '0.05',
+    tax_inclusive: 1,
+  };
+
+  beforeEach(() => {
+    ordersRepository.findOrderById.mockResolvedValue(order);
+    ordersRepository.findOrderWithItems.mockResolvedValue(order);
+    ordersRepository.sumRefundsForOrder.mockResolvedValue(0);
+    ordersRepository.findRefundsForOrder.mockResolvedValue([]);
+    ordersRepository.insertRefund.mockResolvedValue(1);
+    paymentsService.getPaymentsForOrder.mockResolvedValue([]);
+  });
+
+  test('sends the refund to the gateway before recording it', async () => {
+    paymentsService.refundPayment.mockResolvedValue({
+      providerTransactionId: 'TXN1',
+    });
+
+    await ordersService.refundOrder(5, { id: 1, role: 'admin' }, {
+      amount: 5,
+      reason: 'Customer complaint',
+    });
+
+    expect(paymentsService.refundPayment).toHaveBeenCalledWith(5, 5);
+    expect(ordersRepository.insertRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderId: 5,
+        amount: 5,
+        providerTransactionId: 'TXN1',
+      })
+    );
+  });
+
+  test('still records a refund for a cash order with no gateway charge', async () => {
+    paymentsService.refundPayment.mockResolvedValue(null);
+
+    await ordersService.refundOrder(5, { id: 1, role: 'admin' }, { amount: 5 });
+
+    expect(ordersRepository.insertRefund).toHaveBeenCalledWith(
+      expect.objectContaining({ providerTransactionId: null })
+    );
+  });
+
+  test('does not touch the ledger when the gateway rejects the refund', async () => {
+    paymentsService.refundPayment.mockRejectedValue(new Error('Gateway down'));
+
+    await expect(
+      ordersService.refundOrder(5, { id: 1, role: 'admin' }, { amount: 5 })
+    ).rejects.toThrow('Gateway down');
+
+    expect(ordersRepository.insertRefund).not.toHaveBeenCalled();
+  });
+
+  test('rejects a refund larger than the remaining balance', async () => {
+    ordersRepository.sumRefundsForOrder.mockResolvedValue(18);
+
+    await expect(
+      ordersService.refundOrder(5, { id: 1, role: 'admin' }, { amount: 5 })
+    ).rejects.toThrow(/remaining balance/);
+
+    expect(paymentsService.refundPayment).not.toHaveBeenCalled();
+  });
+
+  test('rejects a non-positive amount', async () => {
+    await expect(
+      ordersService.refundOrder(5, { id: 1, role: 'admin' }, { amount: 0 })
+    ).rejects.toThrow(ordersService.OrderValidationError);
   });
 });

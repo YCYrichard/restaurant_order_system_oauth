@@ -6,7 +6,10 @@ import 'package:provider/provider.dart';
 import '../core/api/api_client.dart';
 import '../core/auth/auth_controller.dart';
 import '../core/constants/app_config.dart';
+import '../core/payments/payment_config.dart';
+import '../core/payments/tappay_sdk.dart';
 import '../features/cart/cart_controller.dart';
+import '../features/checkout/widgets/card_payment_fields.dart';
 import '../features/menu/data/menu_repository.dart';
 import '../models/product.dart';
 
@@ -47,6 +50,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool _loadingProducts = true;
   String? _loadError;
 
+  PaymentConfig _paymentConfig = const PaymentConfig(
+    provider: 'manual',
+    currency: 'TWD',
+  );
+  bool _cardFieldsReady = false;
+  bool _paymentFailed = false;
+  String? _paymentError;
+
   @override
   void initState() {
     super.initState();
@@ -56,6 +67,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
 
     _loadProducts();
+    _loadPaymentConfig();
+  }
+
+  // Fetched once up front so the order summary can show the right payment
+  // step immediately rather than flashing "Place Order" and then swapping to
+  // a card form once the request lands.
+  Future<void> _loadPaymentConfig() async {
+    final config = await PaymentConfig.fetch();
+    if (mounted) setState(() => _paymentConfig = config);
   }
 
   @override
@@ -140,13 +160,37 @@ class _CheckoutPageState extends State<CheckoutPage> {
       return;
     }
 
+    if (_paymentConfig.isCard && !_cardFieldsReady) {
+      setState(() => _errorMessage = 'The card form is still loading. One moment.');
+      return;
+    }
+
     setState(() {
       _isSubmitting = true;
       _errorMessage = null;
     });
 
+    // Read from context before the first await - context.read after an
+    // await risks running against a disposed widget's context.
     final userId = context.read<AuthController>().userId;
     final storeId = widget.storeId;
+
+    // Tokenise the card BEFORE creating the order - a bad card should fail
+    // here, not leave an order sitting unpaid because the charge came after.
+    String? prime;
+
+    if (_paymentConfig.isCard) {
+      try {
+        prime = await TapPaySdk.getPrime();
+      } catch (error) {
+        if (!mounted) return;
+        setState(() {
+          _isSubmitting = false;
+          _errorMessage = 'Card error: ${error.toString()}';
+        });
+        return;
+      }
+    }
 
     final items = lines.map((line) {
       final product = _products.firstWhere((p) => p.id == line.productId);
@@ -198,14 +242,45 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        final newOrderId = data['order']?['id']?.toString();
 
         if (mounted) {
           context.read<CartController>().clear();
         }
 
+        // The order exists at this point regardless of what happens next -
+        // a card decline here must not make it look like nothing was
+        // ordered. The success screen shows the payment outcome separately.
+        bool paymentFailed = false;
+        String? paymentError;
+
+        if (prime != null && newOrderId != null) {
+          try {
+            await ApiClient.postJson('/orders/$newOrderId/payments', {
+              'provider': 'tappay',
+              'prime': prime,
+              'cardholder': {
+                'name': _nameController.text.trim(),
+                'phone': _phoneController.text.trim(),
+                'email': _emailController.text.trim(),
+              },
+            });
+          } on ApiException catch (error) {
+            paymentFailed = true;
+            paymentError = error.message;
+          } catch (_) {
+            paymentFailed = true;
+            paymentError = 'Could not reach the payment service.';
+          }
+        }
+
+        if (!mounted) return;
+
         setState(() {
           _isSubmitting = false;
-          _orderId = data['order']?['id']?.toString();
+          _orderId = newOrderId;
+          _paymentFailed = paymentFailed;
+          _paymentError = paymentError;
         });
       } else {
         // Surface the server's own message where it's actionable (an
@@ -238,7 +313,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
   @override
   Widget build(BuildContext context) {
     if (_orderId != null) {
-      return _OrderSuccessSection(orderId: _orderId!);
+      return _OrderSuccessSection(
+        orderId: _orderId!,
+        paymentFailed: _paymentFailed,
+        paymentError: _paymentError,
+      );
     }
 
     if (_loadingProducts) {
@@ -446,6 +525,25 @@ class _CheckoutPageState extends State<CheckoutPage> {
                         color: Color(0xFF77716D),
                       ),
                     ),
+                    if (_paymentConfig.isCard) ...[
+                      const SizedBox(height: 28),
+                      const Text(
+                        'Payment',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      CardPaymentFields(
+                        appId: _paymentConfig.appId!,
+                        appKey: _paymentConfig.appKey!,
+                        env: _paymentConfig.env!,
+                        onReady: () {
+                          if (mounted) setState(() => _cardFieldsReady = true);
+                        },
+                      ),
+                    ],
                     const SizedBox(height: 24),
                     if (_errorMessage != null) ...[
                       Container(
@@ -468,8 +566,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     Align(
                       alignment: Alignment.centerRight,
                       child: FilledButton.icon(
-                        onPressed:
-                            _isSubmitting ? null : () => _submitOrder(lines),
+                        onPressed: (_isSubmitting ||
+                                (_paymentConfig.isCard && !_cardFieldsReady))
+                            ? null
+                            : () => _submitOrder(lines),
                         icon: _isSubmitting
                             ? const SizedBox(
                                 width: 20,
@@ -481,7 +581,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
                               )
                             : const Icon(Icons.check),
                         label: Text(
-                          _isSubmitting ? 'Placing order...' : 'Place Order',
+                          _isSubmitting
+                              ? (_paymentConfig.isCard
+                                  ? 'Processing payment...'
+                                  : 'Placing order...')
+                              : (_paymentConfig.isCard
+                                  ? 'Pay & Place Order'
+                                  : 'Place Order'),
                         ),
                       ),
                     ),
@@ -662,8 +768,14 @@ class _SummaryStat extends StatelessWidget {
 
 class _OrderSuccessSection extends StatelessWidget {
   final String orderId;
+  final bool paymentFailed;
+  final String? paymentError;
 
-  const _OrderSuccessSection({required this.orderId});
+  const _OrderSuccessSection({
+    required this.orderId,
+    this.paymentFailed = false,
+    this.paymentError,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -690,9 +802,9 @@ class _OrderSuccessSection extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
-                      Icons.check_circle,
-                      color: Colors.green,
+                    Icon(
+                      paymentFailed ? Icons.error_outline : Icons.check_circle,
+                      color: paymentFailed ? Colors.orange : Colors.green,
                       size: 64,
                     ),
                     const SizedBox(height: 20),
@@ -712,15 +824,48 @@ class _OrderSuccessSection extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    const Text(
-                      'Thank you for ordering with Orange Bistro. We will prepare your items shortly.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 16,
-                        height: 1.6,
-                        color: Color(0xFF625D5A),
+                    if (paymentFailed) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF4E5),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Your order was placed, but the card payment '
+                              'did not go through.',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            if (paymentError != null) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                paymentError!,
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                            ],
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Please pay at pickup, or contact the store.',
+                              style: TextStyle(fontSize: 13),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                      const SizedBox(height: 20),
+                    ] else
+                      const Text(
+                        'Thank you for ordering with Orange Bistro. We will prepare your items shortly.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 16,
+                          height: 1.6,
+                          color: Color(0xFF625D5A),
+                        ),
+                      ),
                     const SizedBox(height: 24),
                     FilledButton.icon(
                       onPressed: () => context.go('/'),
