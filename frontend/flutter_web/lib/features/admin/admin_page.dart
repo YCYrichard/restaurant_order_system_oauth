@@ -22,6 +22,18 @@ class AdminPage extends StatefulWidget {
   State<AdminPage> createState() => _AdminPageState();
 }
 
+class _AdminTab {
+  final String title;
+  final IconData icon;
+  final Widget content;
+
+  const _AdminTab({
+    required this.title,
+    required this.icon,
+    required this.content,
+  });
+}
+
 class _AdminPageState extends State<AdminPage> {
   List<Map<String, dynamic>> stores = [];
   List<Map<String, dynamic>> products = [];
@@ -1379,115 +1391,183 @@ class _AdminPageState extends State<AdminPage> {
     return parsed.toStringAsFixed(2);
   }
 
+  // One tab per former stacked panel, plus a combined "Menu" tab for
+  // Categories + Products (they were already shown side by side). Stores
+  // stays its own tab rather than a persistent picker above the tabs -
+  // _loadStores already auto-selects a sensible store on load, so the
+  // common case (owner with one store, admin who rarely switches) never
+  // needs to visit it just to keep working in another tab.
+  List<_AdminTab> _buildTabs(bool isAdmin) {
+    return [
+      _AdminTab(
+        title: 'Stores',
+        icon: Icons.store_outlined,
+        content: _buildStoresPanel(),
+      ),
+      _AdminTab(
+        title: 'Menu',
+        icon: Icons.restaurant_menu,
+        content: _buildMenuTab(),
+      ),
+      _AdminTab(
+        title: 'Orders',
+        icon: Icons.receipt_long_outlined,
+        content: OrdersPanel(selectedStore: selectedStore),
+      ),
+      _AdminTab(
+        title: 'Modifiers',
+        icon: Icons.tune,
+        content: ModifiersPanel(
+          selectedStore: selectedStore,
+          products: products,
+        ),
+      ),
+      _AdminTab(
+        title: 'Hours',
+        icon: Icons.schedule,
+        content: StoreHoursPanel(selectedStore: selectedStore),
+      ),
+      _AdminTab(
+        title: 'QR Codes',
+        icon: Icons.qr_code,
+        content: TableQrPanel(selectedStore: selectedStore),
+      ),
+      _AdminTab(
+        title: 'Coupons',
+        icon: Icons.local_offer_outlined,
+        content: CouponsPanel(selectedStore: selectedStore),
+      ),
+      _AdminTab(
+        title: 'Reports',
+        icon: Icons.bar_chart,
+        content: ReportsPanel(auth: _auth, selectedStore: selectedStore),
+      ),
+      // Staff-account creation and store-access grants are admin-only on
+      // the backend (users.routes.js) - an owner reaching this page (their
+      // own store's tools) would only see this panel 403 on every load, so
+      // it's hidden rather than shown broken.
+      if (isAdmin)
+        _AdminTab(
+          title: 'Users',
+          icon: Icons.people_outline,
+          content: UsersPanel(stores: stores),
+        ),
+    ];
+  }
+
+  Widget _buildMenuTab() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 900;
+
+        if (isWide) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(flex: 4, child: _buildCategoriesPanel()),
+              const SizedBox(width: 20),
+              Expanded(flex: 6, child: _buildProductsPanel()),
+            ],
+          );
+        }
+
+        return Column(
+          children: [
+            _buildCategoriesPanel(),
+            const SizedBox(height: 20),
+            _buildProductsPanel(),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildTabContent(Widget child) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1250),
+          child: child,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFFFFBF7),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        elevation: 0,
-        title: const Text('Admin Dashboard'),
-        actions: [
-          IconButton(
-            onPressed: _loadingStores ? null : _loadStores,
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh',
-          ),
-          const SizedBox(width: 8),
-          OutlinedButton.icon(
-            onPressed: () => context.go('/kitchen'),
-            icon: const Icon(Icons.soup_kitchen),
-            label: const Text('Kitchen Display'),
-          ),
-          const SizedBox(width: 8),
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: OutlinedButton.icon(
-              onPressed: _logout,
-              icon: const Icon(Icons.logout),
-              label: const Text('Logout'),
-            ),
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1250),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildHeader(),
-                const SizedBox(height: 20),
-                if (_message != null) _buildMessage(),
-                if (_message != null) const SizedBox(height: 20),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final isWide = constraints.maxWidth >= 900;
+    final isAdmin = context.watch<AuthController>().isAdmin;
+    final tabs = _buildTabs(isAdmin);
 
-                    if (isWide) {
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            flex: 4,
-                            child: Column(
-                              children: [
-                                _buildStoresPanel(),
-                                const SizedBox(height: 20),
-                                _buildCategoriesPanel(),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 20),
-                          Expanded(
-                            flex: 6,
-                            child: _buildProductsPanel(),
-                          ),
-                        ],
-                      );
-                    }
-
-                    return Column(
-                      children: [
-                        _buildStoresPanel(),
-                        const SizedBox(height: 20),
-                        _buildCategoriesPanel(),
-                        const SizedBox(height: 20),
-                        _buildProductsPanel(),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 20),
-                OrdersPanel(selectedStore: selectedStore),
-                const SizedBox(height: 20),
-                ModifiersPanel(
-                  selectedStore: selectedStore,
-                  products: products,
-                ),
-                const SizedBox(height: 20),
-                StoreHoursPanel(selectedStore: selectedStore),
-                const SizedBox(height: 20),
-                TableQrPanel(selectedStore: selectedStore),
-                const SizedBox(height: 20),
-                CouponsPanel(selectedStore: selectedStore),
-                const SizedBox(height: 20),
-                ReportsPanel(auth: _auth, selectedStore: selectedStore),
-                // Staff-account creation and store-access grants are
-                // admin-only on the backend (users.routes.js) - an owner
-                // reaching this page (their own store's tools) would only
-                // see this panel 403 on every load, so it's hidden rather
-                // than shown broken.
-                if (context.watch<AuthController>().isAdmin) ...[
-                  const SizedBox(height: 20),
-                  UsersPanel(stores: stores),
-                ],
-              ],
+    return DefaultTabController(
+      length: tabs.length,
+      child: Scaffold(
+        backgroundColor: const Color(0xFFFFFBF7),
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.white,
+          elevation: 0,
+          title: const Text('Admin Dashboard'),
+          actions: [
+            IconButton(
+              onPressed: _loadingStores ? null : _loadStores,
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Refresh',
             ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: () => context.go('/kitchen'),
+              icon: const Icon(Icons.soup_kitchen),
+              label: const Text('Kitchen Display'),
+            ),
+            const SizedBox(width: 8),
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: OutlinedButton.icon(
+                onPressed: _logout,
+                icon: const Icon(Icons.logout),
+                label: const Text('Logout'),
+              ),
+            ),
+          ],
+          bottom: TabBar(
+            isScrollable: true,
+            tabAlignment: TabAlignment.start,
+            tabs: tabs
+                .map(
+                  (tab) => Tab(
+                    icon: Icon(tab.icon, size: 20),
+                    text: tab.title,
+                  ),
+                )
+                .toList(),
           ),
+        ),
+        body: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1250),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHeader(),
+                      if (_message != null) const SizedBox(height: 20),
+                      if (_message != null) _buildMessage(),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: TabBarView(
+                children:
+                    tabs.map((tab) => _buildTabContent(tab.content)).toList(),
+              ),
+            ),
+          ],
         ),
       ),
     );
