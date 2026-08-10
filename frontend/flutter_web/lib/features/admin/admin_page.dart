@@ -1494,6 +1494,68 @@ class _AdminPageState extends State<AdminPage> {
     );
   }
 
+  // Only worth showing once there's more than one store to switch between -
+  // a single-store owner never needs this, and _loadStores already picks a
+  // sensible default so there's nothing to pick from a list of one.
+  Widget _buildStoreSwitcher() {
+    if (stores.length <= 1) {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 16),
+      child: PopupMenuButton<Map<String, dynamic>>(
+        tooltip: 'Switch store',
+        onSelected: _selectStore,
+        itemBuilder: (context) => stores.map((store) {
+          final isSelected =
+              selectedStore != null && selectedStore!['id'] == store['id'];
+
+          return PopupMenuItem<Map<String, dynamic>>(
+            value: store,
+            child: Row(
+              children: [
+                Icon(
+                  isSelected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  size: 18,
+                  color: isSelected ? Colors.deepOrange : Colors.grey,
+                ),
+                const SizedBox(width: 10),
+                Text(store['name']?.toString() ?? 'Unnamed Store'),
+              ],
+            ),
+          );
+        }).toList(),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            border: Border.all(color: const Color(0xFFE6E1DD)),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.store, size: 18, color: Colors.deepOrange),
+              const SizedBox(width: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 180),
+                child: Text(
+                  selectedStore?['name']?.toString() ?? 'Select store',
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              const SizedBox(width: 2),
+              const Icon(Icons.arrow_drop_down, size: 18),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isAdmin = context.watch<AuthController>().isAdmin;
@@ -1507,7 +1569,12 @@ class _AdminPageState extends State<AdminPage> {
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.white,
           elevation: 0,
-          title: const Text('Admin Dashboard'),
+          title: Row(
+            children: [
+              const Text('Admin Dashboard'),
+              _buildStoreSwitcher(),
+            ],
+          ),
           actions: [
             IconButton(
               onPressed: _loadingStores ? null : _loadStores,
