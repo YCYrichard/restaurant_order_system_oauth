@@ -10,6 +10,13 @@ class TopBar extends StatelessWidget {
   final VoidCallback onLoginTap;
   final VoidCallback onLogoutTap;
 
+  /// Set only when the signed-in user has staff/owner/admin access to THIS
+  /// store - "Manage this store" for an owner/admin, "Kitchen" for staff.
+  /// Null on every other store's page, where this same account is just a
+  /// customer.
+  final String? managementLabel;
+  final VoidCallback? onManagementTap;
+
   const TopBar({
     super.key,
     required this.storeName,
@@ -19,6 +26,8 @@ class TopBar extends StatelessWidget {
     required this.onCheckoutTap,
     required this.onLoginTap,
     required this.onLogoutTap,
+    this.managementLabel,
+    this.onManagementTap,
   });
 
   @override
@@ -50,6 +59,20 @@ class TopBar extends StatelessWidget {
         ],
       ),
       actions: [
+        if (managementLabel != null)
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: OutlinedButton.icon(
+              onPressed: onManagementTap,
+              icon: Icon(
+                managementLabel == 'Kitchen'
+                    ? Icons.soup_kitchen
+                    : Icons.storefront,
+                size: 18,
+              ),
+              label: Text(managementLabel!),
+            ),
+          ),
         TextButton(
           onPressed: onCheckoutTap,
           child: const Text('Checkout'),

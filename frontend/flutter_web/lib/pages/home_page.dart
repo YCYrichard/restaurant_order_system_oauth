@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -44,6 +46,11 @@ class _HomePageState extends State<HomePage> {
   // Null means ASAP - the common case, and the default.
   String? _selectedReadyAt;
 
+  AuthController? _authController;
+  // "Manage this store" (admin/owner) or "Kitchen" (staff) - null everywhere
+  // this signed-in account has no access, including every other store.
+  String? _managementLabel;
+
   @override
   void initState() {
     super.initState();
@@ -53,6 +60,68 @@ class _HomePageState extends State<HomePage> {
       _loadMenu(widget.storeId!);
       _loadPickupSlots(widget.storeId!);
     }
+
+    _authController = context.read<AuthController>()
+      ..addListener(_refreshManagementAccess);
+  }
+
+  @override
+  void dispose() {
+    _authController?.removeListener(_refreshManagementAccess);
+    super.dispose();
+  }
+
+  /// Store access is per-account and per-store - an owner/staff account is
+  /// only offered a way into admin/kitchen tools on a store they actually
+  /// have access to; on any other store's page this same account is just a
+  /// customer. Admin has access everywhere, so no round trip is needed for
+  /// that role; owner/staff are resolved by asking the one endpoint that
+  /// already enforces this (GET /stores/:id, requireStoreAccess) rather than
+  /// duplicating that authorization decision on the client.
+  Future<void> _refreshManagementAccess() async {
+    final auth = _authController;
+    if (auth == null || !mounted) return;
+
+    if (!auth.isLoggedIn || _store == null || widget.storeId == null) {
+      if (_managementLabel != null) setState(() => _managementLabel = null);
+      return;
+    }
+
+    if (auth.role == 'admin') {
+      if (_managementLabel != 'Manage this store') {
+        setState(() => _managementLabel = 'Manage this store');
+      }
+      return;
+    }
+
+    if (auth.role != 'owner' && auth.role != 'staff') {
+      if (_managementLabel != null) setState(() => _managementLabel = null);
+      return;
+    }
+
+    final targetLabel = auth.role == 'owner' ? 'Manage this store' : 'Kitchen';
+
+    try {
+      final response =
+          await auth.authorizedRequest('GET', '/stores/${widget.storeId}');
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        if (_managementLabel != targetLabel) {
+          setState(() => _managementLabel = targetLabel);
+        }
+      } else if (_managementLabel != null) {
+        setState(() => _managementLabel = null);
+      }
+    } catch (_) {
+      // Leave whatever was last known - a network hiccup shouldn't flash
+      // the affordance on and off.
+    }
+  }
+
+  void _goToManagement() {
+    context.push(_managementLabel == 'Kitchen' ? '/kitchen' : '/admin');
   }
 
   Future<void> _loadStore() async {
@@ -95,6 +164,8 @@ class _HomePageState extends State<HomePage> {
         _storeError = match.isEmpty ? 'This restaurant is not available.' : null;
         _loadingStore = false;
       });
+
+      unawaited(_refreshManagementAccess());
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -305,6 +376,8 @@ class _HomePageState extends State<HomePage> {
           onCheckoutTap: () => _goToCheckout(cart),
           onLoginTap: _goToLogin,
           onLogoutTap: () => context.read<AuthController>().logout(),
+          managementLabel: _managementLabel,
+          onManagementTap: _managementLabel != null ? _goToManagement : null,
         ),
       ),
       body: SingleChildScrollView(

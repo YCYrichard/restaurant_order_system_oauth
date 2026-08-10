@@ -1476,8 +1476,15 @@ class _AdminPageState extends State<AdminPage> {
                 CouponsPanel(selectedStore: selectedStore),
                 const SizedBox(height: 20),
                 ReportsPanel(auth: _auth, selectedStore: selectedStore),
-                const SizedBox(height: 20),
-                UsersPanel(stores: stores),
+                // Staff-account creation and store-access grants are
+                // admin-only on the backend (users.routes.js) - an owner
+                // reaching this page (their own store's tools) would only
+                // see this panel 403 on every load, so it's hidden rather
+                // than shown broken.
+                if (context.watch<AuthController>().isAdmin) ...[
+                  const SizedBox(height: 20),
+                  UsersPanel(stores: stores),
+                ],
               ],
             ),
           ),

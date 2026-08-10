@@ -29,10 +29,14 @@ GoRouter buildAppRouter(AuthController authController) {
 
       final isAdminArea =
           location.startsWith('/admin') && location != '/admin/login';
-      final isAuthenticatedAdmin =
-          authController.isLoggedIn && authController.isAdmin;
+      // Owner is admitted alongside admin - AdminPage's own data is already
+      // scoped to "stores this owner was granted" (stores.service.js
+      // listStores), so this doesn't hand an owner anything beyond their
+      // own store. Staff stay out of this area entirely; /kitchen is theirs.
+      final canAccessAdminArea = authController.isLoggedIn &&
+          (authController.isAdmin || authController.role == 'owner');
 
-      if (isAdminArea && !isAuthenticatedAdmin) {
+      if (isAdminArea && !canAccessAdminArea) {
         return '/admin/login';
       }
 
@@ -60,7 +64,7 @@ GoRouter buildAppRouter(AuthController authController) {
         return '/admin/login';
       }
 
-      if (location == '/admin/login' && isAuthenticatedAdmin) {
+      if (location == '/admin/login' && canAccessAdminArea) {
         return '/admin';
       }
 

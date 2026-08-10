@@ -114,10 +114,12 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
         return;
       }
 
-      // Admins land on the dashboard (the router redirects '/' there for
-      // them); everyone else goes straight to the screen they're for.
-      if (payload.role == 'admin') {
-        context.go('/');
+      // Admins and owners land on the dashboard (admin sees every store,
+      // owner sees only the ones they've been granted - listStores on the
+      // backend already scopes that). Staff go straight to the kitchen
+      // screen, which is the only tool their role needs.
+      if (payload.role == 'admin' || payload.role == 'owner') {
+        context.go('/admin');
       } else {
         context.go('/kitchen');
       }
