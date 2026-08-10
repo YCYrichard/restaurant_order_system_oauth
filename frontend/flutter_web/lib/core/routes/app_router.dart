@@ -79,18 +79,21 @@ GoRouter buildAppRouter(AuthController authController) {
         builder: (context, state) => const RootRedirectPage(),
       ),
       // The actual customer entry point, reached via a QR code or a direct
-      // link a restaurant hands out - not from any in-app picker.
+      // link a restaurant hands out - not from any in-app picker. :code is
+      // stores.public_code, never the numeric id (see the public_code
+      // migration - a sequential id in this URL would let a visitor walk
+      // every store on the platform).
       GoRoute(
-        path: '/store/:storeId',
+        path: '/store/:code',
         builder: (context, state) {
-          final storeId = int.tryParse(state.pathParameters['storeId'] ?? '');
+          final code = state.pathParameters['code'];
           // ?table=N arrives from a scanned table QR code and makes this a
           // dine-in order.
           final tableNumber =
               int.tryParse(state.uri.queryParameters['table'] ?? '');
 
           return HomePage(
-            storeId: storeId,
+            code: code,
             tableNumber: tableNumber != null && tableNumber > 0
                 ? tableNumber
                 : null,
@@ -98,10 +101,9 @@ GoRouter buildAppRouter(AuthController authController) {
         },
       ),
       GoRoute(
-        path: '/store/:storeId/cart',
+        path: '/store/:code/cart',
         builder: (context, state) {
-          final storeId = int.tryParse(state.pathParameters['storeId'] ?? '');
-          return CartPage(storeId: storeId);
+          return CartPage(code: state.pathParameters['code']);
         },
       ),
       GoRoute(
@@ -113,13 +115,11 @@ GoRouter buildAppRouter(AuthController authController) {
       GoRoute(
         path: '/checkout',
         builder: (context, state) {
-          final storeId =
-              int.tryParse(state.uri.queryParameters['storeId'] ?? '') ?? 0;
           final tableNumber =
               int.tryParse(state.uri.queryParameters['table'] ?? '');
 
           return CheckoutPage(
-            storeId: storeId,
+            code: state.uri.queryParameters['code'],
             tableNumber: tableNumber != null && tableNumber > 0
                 ? tableNumber
                 : null,

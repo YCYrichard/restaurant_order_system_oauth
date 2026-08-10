@@ -92,15 +92,61 @@ async function listPublicStores() {
   return Promise.all(
     stores.map(async (store) => {
       const openState = await storeHoursService.getStoreOpenState(store);
+      // id never reaches an unauthenticated client - public_code is the
+      // only identifier a customer-facing response carries. timezone is
+      // only fetched for the openState computation above, not for display.
+      // eslint-disable-next-line no-unused-vars
+      const { id, timezone, ...publicFields } = store;
 
       return {
-        ...store,
+        ...publicFields,
         is_open: openState.isOpen,
         closed_reason: openState.reason,
         today_hours: openState.todayHours ?? null,
       };
     })
   );
+}
+
+/// The single-store counterpart of listPublicStores, for a customer landing
+/// on /store/:code. Unlike the list, this DOES include the numeric id - the
+/// frontend needs it for every subsequent call (menu, pickup-slots, order
+/// creation) once it has resolved the code. That's not a re-opening of the
+/// enumeration problem: reaching this response requires already having a
+/// valid code (not guessable - the whole point of public_code), and every
+/// authenticated route still requires requireStoreAccess regardless of
+/// whether the caller knows a numeric id. The list drops id because nothing
+/// needs a code to see it; this endpoint keeps it because the resolution
+/// only happens once the caller already has one.
+async function getStoreByCode(code) {
+  const store = await storesRepository.findStoreByCode(code);
+
+  if (!store) {
+    throw new StoreNotFoundError();
+  }
+
+  const openState = await storeHoursService.getStoreOpenState(store);
+  // eslint-disable-next-line no-unused-vars
+  const { timezone, ...publicFields } = store;
+
+  return {
+    ...publicFields,
+    is_open: openState.isOpen,
+    closed_reason: openState.reason,
+    today_hours: openState.todayHours ?? null,
+  };
+}
+
+/// The leaked-QR safety valve - issues a new code so the old one (printed,
+/// shared, whatever) stops resolving immediately.
+async function regenerateStoreCode(storeId) {
+  const code = await storesRepository.regenerateStoreCode(storeId);
+
+  if (!code) {
+    throw new StoreNotFoundError();
+  }
+
+  return code;
 }
 
 async function getStoreHours(storeId) {
@@ -220,6 +266,8 @@ module.exports = {
   createStore,
   listStores,
   listPublicStores,
+  getStoreByCode,
+  regenerateStoreCode,
   getStoreHours,
   replaceStoreHours,
   addStoreClosure,

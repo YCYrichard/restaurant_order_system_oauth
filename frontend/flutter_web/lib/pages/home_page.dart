@@ -20,13 +20,17 @@ import 'home/widgets/top_bar.dart';
 /// store's QR code or a direct link (never an in-app store picker; see
 /// RootRedirectPage).
 class HomePage extends StatefulWidget {
-  final int? storeId;
+  /// The store's public code (stores.public_code), not its numeric id - the
+  /// address bar never carries the numeric id, so a visitor can't walk
+  /// /store/1, /store/2, ... to browse every other restaurant. The numeric
+  /// id is resolved once, server-side, from this code.
+  final String? code;
 
-  /// Set from /store/:storeId?table=N when a customer scans a table's QR
-  /// code. Implies a dine-in order for that table.
+  /// Set from /store/:code?table=N when a customer scans a table's QR code.
+  /// Implies a dine-in order for that table.
   final int? tableNumber;
 
-  const HomePage({super.key, required this.storeId, this.tableNumber});
+  const HomePage({super.key, required this.code, this.tableNumber});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -36,6 +40,14 @@ class _HomePageState extends State<HomePage> {
   Map<String, dynamic>? _store;
   bool _loadingStore = true;
   String? _storeError;
+
+  // The numeric id, known only once _store resolves - every API call below
+  // uses this, never widget.code. Only navigation (building the next URL)
+  // uses widget.code.
+  int? get _storeId {
+    final id = _store?['id'];
+    return id == null ? null : int.tryParse(id.toString());
+  }
 
   List<Product> products = [];
   bool _loadingMenu = false;
@@ -55,11 +67,6 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _loadStore();
-
-    if (widget.storeId != null) {
-      _loadMenu(widget.storeId!);
-      _loadPickupSlots(widget.storeId!);
-    }
 
     _authController = context.read<AuthController>()
       ..addListener(_refreshManagementAccess);
@@ -82,7 +89,9 @@ class _HomePageState extends State<HomePage> {
     final auth = _authController;
     if (auth == null || !mounted) return;
 
-    if (!auth.isLoggedIn || _store == null || widget.storeId == null) {
+    final storeId = _storeId;
+
+    if (!auth.isLoggedIn || storeId == null) {
       if (_managementLabel != null) setState(() => _managementLabel = null);
       return;
     }
@@ -102,8 +111,7 @@ class _HomePageState extends State<HomePage> {
     final targetLabel = auth.role == 'owner' ? 'Manage this store' : 'Kitchen';
 
     try {
-      final response =
-          await auth.authorizedRequest('GET', '/stores/${widget.storeId}');
+      final response = await auth.authorizedRequest('GET', '/stores/$storeId');
 
       if (!mounted) return;
 
@@ -125,9 +133,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _loadStore() async {
-    final storeId = widget.storeId;
+    final code = widget.code;
 
-    if (storeId == null) {
+    if (code == null || code.isEmpty) {
       setState(() {
         _loadingStore = false;
         _storeError = "This ordering link isn't valid.";
@@ -141,31 +149,34 @@ class _HomePageState extends State<HomePage> {
     });
 
     try {
-      // The list endpoint (rather than a single-store one) is what already
-      // exists and already carries is_open/closed_reason/today_hours.
-      final decoded = await ApiClient.getJson('/stores/public');
-      final stores = decoded is Map && decoded['stores'] is List
-          ? List<Map<String, dynamic>>.from(
-              (decoded['stores'] as List)
-                  .whereType<Map>()
-                  .map((item) => Map<String, dynamic>.from(item)),
-            )
-          : <Map<String, dynamic>>[];
-
-      final match = stores.firstWhere(
-        (store) => int.tryParse(store['id'].toString()) == storeId,
-        orElse: () => const <String, dynamic>{},
-      );
+      final decoded = await ApiClient.getJson('/stores/public/$code');
+      final store = decoded is Map && decoded['store'] is Map
+          ? Map<String, dynamic>.from(decoded['store'])
+          : null;
 
       if (!mounted) return;
 
       setState(() {
-        _store = match.isEmpty ? null : match;
-        _storeError = match.isEmpty ? 'This restaurant is not available.' : null;
+        _store = store;
+        _storeError = store == null ? 'This restaurant is not available.' : null;
         _loadingStore = false;
       });
 
+      final id = _storeId;
+      if (id != null) {
+        _loadMenu(id);
+        _loadPickupSlots(id);
+      }
+
       unawaited(_refreshManagementAccess());
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _storeError = error.statusCode == 404
+            ? 'This restaurant is not available.'
+            : 'Unable to load this restaurant. Please try again.';
+        _loadingStore = false;
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -299,7 +310,7 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    if (widget.storeId == null) return;
+    if (widget.code == null) return;
 
     // Stop the customer at the cart rather than letting them fill in a whole
     // checkout form only to have the server reject it. The server check is
@@ -323,11 +334,11 @@ class _HomePageState extends State<HomePage> {
         ? '&readyAt=${Uri.encodeComponent(_selectedReadyAt!)}'
         : '';
 
-    context.push('/checkout?storeId=${widget.storeId}$tableParam$readyAtParam');
+    context.push('/checkout?code=${widget.code}$tableParam$readyAtParam');
   }
 
   void _goToLogin() {
-    context.push('/login?next=${Uri.encodeComponent('/store/${widget.storeId}')}');
+    context.push('/login?next=${Uri.encodeComponent('/store/${widget.code}')}');
   }
 
   @override
@@ -372,7 +383,7 @@ class _HomePageState extends State<HomePage> {
           storeName: store['name']?.toString() ?? 'Restaurant',
           isLoggedIn: auth.isLoggedIn,
           cartItemCount: cart.itemCount,
-          onCartTap: () => context.push('/store/${widget.storeId}/cart'),
+          onCartTap: () => context.push('/store/${widget.code}/cart'),
           onCheckoutTap: () => _goToCheckout(cart),
           onLoginTap: _goToLogin,
           onLogoutTap: () => context.read<AuthController>().logout(),

@@ -1,11 +1,18 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:web/web.dart' as web;
 
+import '../../../core/auth/auth_controller.dart';
+
 /// Generates the storefront QR/link (the only way a customer reaches this
-/// store - there is no in-app picker) and a printable QR per table. Neither
-/// has a server-side entity - both are just encoded links to
-/// /store/:storeId(?table=N) - so this panel needs no API of its own.
+/// store - there is no in-app picker) and a printable QR per table. Both
+/// encode a link to /store/:code(?table=N) - :code is the store's
+/// public_code, a random string, never the numeric database id (see the
+/// public_code migration: a sequential id in this URL would let a visitor
+/// walk every store on the platform).
 class TableQrPanel extends StatefulWidget {
   final Map<String, dynamic>? selectedStore;
 
@@ -19,6 +26,23 @@ class _TableQrPanelState extends State<TableQrPanel> {
   final _tableController = TextEditingController(text: '1');
 
   int _tableNumber = 1;
+  bool _regenerating = false;
+  String? _message;
+  bool _messageIsError = false;
+
+  // Overrides widget.selectedStore's code the moment a regenerate succeeds,
+  // so the displayed QR/link updates immediately rather than showing a
+  // stale one until AdminPage happens to reload the store list.
+  String? _regeneratedCode;
+
+  @override
+  void didUpdateWidget(covariant TableQrPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.selectedStore?['id'] != widget.selectedStore?['id']) {
+      _regeneratedCode = null;
+    }
+  }
 
   @override
   void dispose() {
@@ -26,18 +50,90 @@ class _TableQrPanelState extends State<TableQrPanel> {
     super.dispose();
   }
 
+  AuthController get _auth => context.read<AuthController>();
+
   String get _origin => web.window.location.origin;
 
-  String _storeUrlFor(int storeId) => '$_origin/#/store/$storeId';
+  String _storeUrlFor(String code) => '$_origin/#/store/$code';
 
-  String _urlFor(int storeId, int tableNumber) =>
-      '${_storeUrlFor(storeId)}?table=$tableNumber';
+  String _urlFor(String code, int tableNumber) =>
+      '${_storeUrlFor(code)}?table=$tableNumber';
+
+  Future<void> _regenerateCode(int storeId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Regenerate storefront link?'),
+        content: const Text(
+          'This issues a new link and QR code for this store. Every '
+          'printed QR code and every link using the current one - '
+          'including any table QR codes - will stop working immediately.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Regenerate'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() {
+      _regenerating = true;
+      _message = null;
+    });
+
+    try {
+      final response = await _auth.authorizedRequest(
+        'PATCH',
+        '/stores/$storeId/regenerate-code',
+      );
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        final newCode = decoded is Map ? decoded['publicCode']?.toString() : null;
+
+        setState(() {
+          _regenerating = false;
+          _regeneratedCode = newCode;
+          _message = 'New link issued. Reprint any QR codes for this store.';
+          _messageIsError = false;
+        });
+      } else {
+        final decoded = jsonDecode(response.body);
+        setState(() {
+          _regenerating = false;
+          _message = decoded is Map && decoded['message'] != null
+              ? decoded['message'].toString()
+              : 'Failed to regenerate the link.';
+          _messageIsError = true;
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _regenerating = false;
+        _message = 'Network error: $error';
+        _messageIsError = true;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final storeId = widget.selectedStore == null
         ? null
         : int.tryParse(widget.selectedStore!['id'].toString());
+    final code =
+        _regeneratedCode ?? widget.selectedStore?['public_code']?.toString();
 
     return Card(
       color: Colors.white,
@@ -59,7 +155,28 @@ class _TableQrPanelState extends State<TableQrPanel> {
               style: TextStyle(color: Color(0xFF625D5A), height: 1.4),
             ),
             const SizedBox(height: 16),
-            if (storeId == null)
+            if (_message != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: _messageIsError
+                      ? const Color(0xFFFFEDEA)
+                      : const Color(0xFFE8F6EC),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  _message!,
+                  style: TextStyle(
+                    color: _messageIsError
+                        ? Colors.redAccent
+                        : Colors.green.shade800,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            if (storeId == null || code == null)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(24),
@@ -74,14 +191,33 @@ class _TableQrPanelState extends State<TableQrPanel> {
                 ),
               )
             else ...[
-              const Text(
-                'Storefront link',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Storefront link',
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _regenerating ? null : () => _regenerateCode(storeId),
+                    icon: _regenerating
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh, size: 16),
+                    label: const Text('Regenerate'),
+                  ),
+                ],
               ),
               const SizedBox(height: 4),
               const Text(
                 'The main link for this store - hand it out directly, or '
-                'post the QR code at the counter or in a window.',
+                'post the QR code at the counter or in a window. If a '
+                'printed copy is ever lost or shared somewhere it shouldn\'t '
+                'be, regenerate it above to invalidate the old one.',
                 style: TextStyle(fontSize: 12, color: Color(0xFF625D5A)),
               ),
               const SizedBox(height: 16),
@@ -96,14 +232,14 @@ class _TableQrPanelState extends State<TableQrPanel> {
                         border: Border.all(color: const Color(0xFFE6E1DD)),
                       ),
                       child: QrImageView(
-                        data: _storeUrlFor(storeId),
+                        data: _storeUrlFor(code),
                         size: 200,
                         backgroundColor: Colors.white,
                       ),
                     ),
                     const SizedBox(height: 12),
                     SelectableText(
-                      _storeUrlFor(storeId),
+                      _storeUrlFor(code),
                       style: const TextStyle(
                         fontSize: 12,
                         color: Color(0xFF77716D),
@@ -159,7 +295,7 @@ class _TableQrPanelState extends State<TableQrPanel> {
                         border: Border.all(color: const Color(0xFFE6E1DD)),
                       ),
                       child: QrImageView(
-                        data: _urlFor(storeId, _tableNumber),
+                        data: _urlFor(code, _tableNumber),
                         size: 200,
                         backgroundColor: Colors.white,
                       ),
@@ -174,7 +310,7 @@ class _TableQrPanelState extends State<TableQrPanel> {
                     ),
                     const SizedBox(height: 8),
                     SelectableText(
-                      _urlFor(storeId, _tableNumber),
+                      _urlFor(code, _tableNumber),
                       style: const TextStyle(
                         fontSize: 12,
                         color: Color(0xFF77716D),

@@ -21,7 +21,9 @@ router.post(
   controller.createStore
 );
 
-// Public, unauthenticated listing for the customer-facing store picker.
+// Public, unauthenticated listing (no longer used to pick a store - there's
+// no in-app picker - but RootRedirectPage still uses it for the
+// exactly-one-active-store convenience redirect).
 // Must be registered before '/:storeId' or Express will treat "public"
 // as a storeId value.
 router.get(
@@ -29,10 +31,24 @@ router.get(
   controller.listPublicStores
 );
 
+// The actual customer entry point: /store/:code resolves through here.
+// Public and unauthenticated, same trust level as the list above.
+router.get(
+  '/public/:code',
+  controller.getStoreByCode
+);
+
 // Public: checkout needs this before there's any reason to be signed in.
 router.get(
   '/:storeId/pickup-slots',
   controller.getPickupSlots
+);
+
+router.patch(
+  '/:storeId/regenerate-code',
+  requireAuth,
+  requireStoreAccess,
+  controller.regenerateStoreCode
 );
 
 router.get(

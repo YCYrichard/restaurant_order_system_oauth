@@ -33,6 +33,30 @@ exports.listPublicStores = async (req, res, next) => {
   }
 };
 
+// Public, unauthenticated - the actual customer entry point (/store/:code).
+// Includes the numeric id, unlike listPublicStores - see getStoreByCode's
+// own comment for why that's not a re-opening of the enumeration problem.
+exports.getStoreByCode = async (req, res, next) => {
+  try {
+    const store = await storesService.getStoreByCode(req.params.code);
+
+    res.status(200).json({ store });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.regenerateStoreCode = async (req, res, next) => {
+  try {
+    const storeId = Number(req.params.storeId);
+    const publicCode = await storesService.regenerateStoreCode(storeId);
+
+    res.status(200).json({ publicCode });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Public, unauthenticated - same reasoning as listPublicStores: the
 // checkout page needs this before there's any reason to be signed in.
 exports.getPickupSlots = async (req, res, next) => {

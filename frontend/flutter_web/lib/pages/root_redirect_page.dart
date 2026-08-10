@@ -4,10 +4,10 @@ import 'package:go_router/go_router.dart';
 import '../core/api/api_client.dart';
 
 /// `/` is not a customer entry point - each store is reached through its own
-/// QR code or link (`/store/:storeId`), never an in-app picker. This page
-/// only exists to handle someone landing on the bare domain: if there's
-/// exactly one active store, send them straight there; otherwise explain
-/// how ordering actually works here instead of showing an empty picker.
+/// QR code or link (`/store/:code`), never an in-app picker. This page only
+/// exists to handle someone landing on the bare domain: if there's exactly
+/// one active store, send them straight there; otherwise explain how
+/// ordering actually works here instead of showing an empty picker.
 class RootRedirectPage extends StatefulWidget {
   const RootRedirectPage({super.key});
 
@@ -39,9 +39,9 @@ class _RootRedirectPageState extends State<RootRedirectPage> {
       if (!mounted) return;
 
       if (stores.length == 1) {
-        final id = stores.first['id'];
-        if (id != null) {
-          context.go('/store/$id');
+        final code = stores.first['public_code'];
+        if (code != null) {
+          context.go('/store/$code');
           return;
         }
       }

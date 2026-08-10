@@ -9,19 +9,22 @@ import '../features/menu/data/menu_repository.dart';
 import '../models/product.dart';
 
 /// Standalone cart page, reachable from the cart icon on any store page.
-/// Needs its own product fetch (rather than reading HomePage's state) since
-/// it's a separate route - the cart only stores product ids and prices, not
-/// names, so rendering line items requires looking the products back up.
+/// Resolves its own store from the code (same as HomePage, and for the same
+/// reason: this is a separate route, so it can't assume HomePage's
+/// in-memory state survived a direct load or hard refresh) - the cart only
+/// stores product ids and prices, not names, so rendering line items also
+/// requires looking the products back up.
 class CartPage extends StatefulWidget {
-  final int? storeId;
+  final String? code;
 
-  const CartPage({super.key, required this.storeId});
+  const CartPage({super.key, required this.code});
 
   @override
   State<CartPage> createState() => _CartPageState();
 }
 
 class _CartPageState extends State<CartPage> {
+  int? _storeId;
   List<Product> _products = [];
   bool _loading = true;
   String? _error;
@@ -29,16 +32,16 @@ class _CartPageState extends State<CartPage> {
   @override
   void initState() {
     super.initState();
-    _loadProducts();
+    _loadStoreAndProducts();
   }
 
-  Future<void> _loadProducts() async {
-    final storeId = widget.storeId;
+  Future<void> _loadStoreAndProducts() async {
+    final code = widget.code;
 
-    if (storeId == null) {
+    if (code == null || code.isEmpty) {
       setState(() {
         _loading = false;
-        _error = 'This cart link is missing a store.';
+        _error = "This cart link isn't valid.";
       });
       return;
     }
@@ -49,11 +52,28 @@ class _CartPageState extends State<CartPage> {
     });
 
     try {
+      final decoded = await ApiClient.getJson('/stores/public/$code');
+      final store = decoded is Map && decoded['store'] is Map
+          ? Map<String, dynamic>.from(decoded['store'])
+          : null;
+      final storeId =
+          store == null ? null : int.tryParse(store['id'].toString());
+
+      if (storeId == null) {
+        if (!mounted) return;
+        setState(() {
+          _loading = false;
+          _error = 'This restaurant is not available.';
+        });
+        return;
+      }
+
       final products = await MenuRepository.fetchProducts(storeId);
 
       if (!mounted) return;
 
       setState(() {
+        _storeId = storeId;
         _products = products;
         _loading = false;
       });
@@ -85,18 +105,18 @@ class _CartPageState extends State<CartPage> {
     return _findProduct(productId) ??
         Product(
           id: productId,
-          storeId: widget.storeId ?? 0,
+          storeId: _storeId ?? 0,
           name: 'Item no longer available',
           price: 0,
         );
   }
 
   void _goToCheckout(CartController cart) {
-    final storeId = widget.storeId;
+    final code = widget.code;
 
-    if (cart.isEmpty || storeId == null) return;
+    if (cart.isEmpty || code == null) return;
 
-    context.push('/checkout?storeId=$storeId');
+    context.push('/checkout?code=$code');
   }
 
   @override
@@ -110,8 +130,8 @@ class _CartPageState extends State<CartPage> {
         surfaceTintColor: Colors.white,
         elevation: 0,
         leading: IconButton(
-          onPressed: () => widget.storeId != null
-              ? context.go('/store/${widget.storeId}')
+          onPressed: () => widget.code != null
+              ? context.go('/store/${widget.code}')
               : context.go('/'),
           icon: const Icon(Icons.arrow_back),
           tooltip: 'Back to menu',
@@ -129,7 +149,7 @@ class _CartPageState extends State<CartPage> {
                         Text(_error!, textAlign: TextAlign.center),
                         const SizedBox(height: 16),
                         FilledButton(
-                          onPressed: _loadProducts,
+                          onPressed: _loadStoreAndProducts,
                           child: const Text('Retry'),
                         ),
                       ],

@@ -15,7 +15,9 @@ import '../features/menu/data/menu_repository.dart';
 import '../models/product.dart';
 
 class CheckoutPage extends StatefulWidget {
-  final int storeId;
+  /// The store's public code, not its numeric id - see HomePage's `code`
+  /// field for why. Resolved to a numeric id internally on load.
+  final String? code;
 
   /// Carried over from a scanned table QR code. When set, this is a
   /// dine-in order for that table rather than pickup.
@@ -27,7 +29,7 @@ class CheckoutPage extends StatefulWidget {
 
   const CheckoutPage({
     super.key,
-    required this.storeId,
+    required this.code,
     this.tableNumber,
     this.initialReadyAt,
   });
@@ -51,6 +53,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   String? _errorMessage;
   String _fulfillmentType = 'pickup';
 
+  int? _storeId;
   List<Product> _products = [];
   bool _loadingProducts = true;
   String? _loadError;
@@ -77,20 +80,27 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
     _selectedReadyAt = widget.initialReadyAt;
 
-    _loadProducts();
     _loadPaymentConfig();
 
-    if (widget.tableNumber == null) {
-      _loadPickupSlots();
-    }
+    // Pickup slots need the resolved numeric store id, so they wait for
+    // _loadProducts to finish resolving the store from its code.
+    _loadProducts().then((_) {
+      if (!mounted) return;
+      if (widget.tableNumber == null && _storeId != null) {
+        _loadPickupSlots();
+      }
+    });
   }
 
   Future<void> _loadPickupSlots() async {
+    final storeId = _storeId;
+    if (storeId == null) return;
+
     setState(() => _loadingPickupSlots = true);
 
     try {
       final decoded =
-          await ApiClient.getJson('/stores/${widget.storeId}/pickup-slots');
+          await ApiClient.getJson('/stores/$storeId/pickup-slots');
 
       if (!mounted) return;
 
@@ -122,18 +132,46 @@ class _CheckoutPageState extends State<CheckoutPage> {
     super.dispose();
   }
 
-  // CheckoutPage fetches its own menu instead of receiving it from
-  // HomePage, so a direct load or hard refresh of /checkout?storeId=N
-  // works on its own rather than depending on in-memory navigation state
-  // that doesn't survive a reload.
+  // CheckoutPage resolves its own store and fetches its own menu instead of
+  // receiving them from HomePage, so a direct load or hard refresh of
+  // /checkout?code=... works on its own rather than depending on in-memory
+  // navigation state that doesn't survive a reload.
   Future<void> _loadProducts() async {
     setState(() {
       _loadingProducts = true;
       _loadError = null;
     });
 
+    final code = widget.code;
+
+    if (code == null || code.isEmpty) {
+      setState(() {
+        _loadError = "This checkout link isn't valid.";
+        _loadingProducts = false;
+      });
+      return;
+    }
+
     try {
-      final products = await MenuRepository.fetchProducts(widget.storeId);
+      final storeDecoded = await ApiClient.getJson('/stores/public/$code');
+      final store = storeDecoded is Map && storeDecoded['store'] is Map
+          ? Map<String, dynamic>.from(storeDecoded['store'])
+          : null;
+      final storeId =
+          store == null ? null : int.tryParse(store['id'].toString());
+
+      if (storeId == null) {
+        if (!mounted) return;
+        setState(() {
+          _loadError = 'This restaurant is not available.';
+          _loadingProducts = false;
+        });
+        return;
+      }
+
+      _storeId = storeId;
+
+      final products = await MenuRepository.fetchProducts(storeId);
 
       if (!mounted) return;
 
@@ -193,6 +231,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
       return;
     }
 
+    // Only reachable once _loadProducts resolved a store (the form isn't
+    // shown otherwise - see the _loadingProducts/_loadError gate in build),
+    // but a defensive check here costs nothing and avoids sending a null
+    // storeId if that assumption is ever wrong.
+    final storeId = _storeId;
+    if (storeId == null) {
+      setState(() => _errorMessage = 'This checkout link is no longer valid.');
+      return;
+    }
+
     if (_paymentConfig.isCard && !_cardFieldsReady) {
       setState(() => _errorMessage = 'The card form is still loading. One moment.');
       return;
@@ -206,7 +254,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
     // Read from context before the first await - context.read after an
     // await risks running against a disposed widget's context.
     final auth = context.read<AuthController>();
-    final storeId = widget.storeId;
 
     // Tokenise the card BEFORE creating the order - a bad card should fail
     // here, not leave an order sitting unpaid because the charge came after.

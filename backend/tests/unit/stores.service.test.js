@@ -1,6 +1,7 @@
 jest.mock('../../src/repositories/stores.repository');
 jest.mock('../../src/services/store-hours.service', () => ({
   getPickupSlots: jest.fn(),
+  getStoreOpenState: jest.fn(),
 }));
 
 const storesRepository = require('../../src/repositories/stores.repository');
@@ -8,6 +9,8 @@ const storeHoursService = require('../../src/services/store-hours.service');
 const storesService = require('../../src/services/stores.service');
 
 const store = { id: 1, name: 'Demo Store', address: null, phone: null };
+
+const openState = { isOpen: true, reason: null, todayHours: null };
 
 describe('stores.service.updateStore minPrepMinutes', () => {
   beforeEach(() => {
@@ -73,5 +76,75 @@ describe('stores.service.getPickupSlots', () => {
 
     expect(storeHoursService.getPickupSlots).toHaveBeenCalledWith(store);
     expect(result).toEqual({ slots: [] });
+  });
+});
+
+describe('stores.service.listPublicStores', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storeHoursService.getStoreOpenState.mockResolvedValue(openState);
+  });
+
+  test('never exposes the numeric id to an unauthenticated caller', async () => {
+    storesRepository.findPublicStores.mockResolvedValue([
+      { id: 1, public_code: 'abc123', name: 'Demo Store', timezone: 'Asia/Taipei' },
+    ]);
+
+    const [result] = await storesService.listPublicStores();
+
+    expect(result).not.toHaveProperty('id');
+    expect(result).not.toHaveProperty('timezone');
+    expect(result.public_code).toBe('abc123');
+    expect(result.is_open).toBe(true);
+  });
+});
+
+describe('stores.service.getStoreByCode', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storeHoursService.getStoreOpenState.mockResolvedValue(openState);
+  });
+
+  test('throws when no store matches the code', async () => {
+    storesRepository.findStoreByCode.mockResolvedValue(null);
+
+    await expect(storesService.getStoreByCode('doesnotexist')).rejects.toThrow(
+      storesService.StoreNotFoundError
+    );
+  });
+
+  test('includes the numeric id, unlike the list endpoint - the frontend needs it once resolved', async () => {
+    storesRepository.findStoreByCode.mockResolvedValue({
+      id: 1,
+      public_code: 'abc123',
+      name: 'Demo Store',
+      timezone: 'Asia/Taipei',
+    });
+
+    const result = await storesService.getStoreByCode('abc123');
+
+    expect(result.id).toBe(1);
+    expect(result.public_code).toBe('abc123');
+    expect(result).not.toHaveProperty('timezone');
+  });
+});
+
+describe('stores.service.regenerateStoreCode', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('throws when the store does not exist', async () => {
+    storesRepository.regenerateStoreCode.mockResolvedValue(null);
+
+    await expect(storesService.regenerateStoreCode(99)).rejects.toThrow(
+      storesService.StoreNotFoundError
+    );
+  });
+
+  test('returns the freshly issued code', async () => {
+    storesRepository.regenerateStoreCode.mockResolvedValue('newcode123');
+
+    await expect(storesService.regenerateStoreCode(1)).resolves.toBe(
+      'newcode123'
+    );
   });
 });
