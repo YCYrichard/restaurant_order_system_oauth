@@ -128,13 +128,14 @@ async function getStoreAccessForUser(userId) {
   return usersRepository.findStoreAccessForUser(userId);
 }
 
-// A grant only ever promotes a plain customer up to staff-tier - it never
-// touches an existing admin/owner/staff role, so it can't clobber a
-// deliberately-configured local staff account or demote an admin. Owner and
-// manager both land on the back-office ('owner'); plain staff stays
-// kitchen-only.
-function staffTierRoleFor(accessRole) {
-  return accessRole === 'staff' ? 'staff' : 'owner';
+// Owner and manager grants both land on the back-office ('owner'); plain
+// staff grants stay kitchen-only.
+function staffTierRoleFor(grants) {
+  const hasBackOfficeGrant = grants.some(
+    (grant) => grant.access_role === 'owner' || grant.access_role === 'manager'
+  );
+
+  return hasBackOfficeGrant ? 'owner' : 'staff';
 }
 
 async function grantStoreAccess(userId, { storeId, accessRole }) {
@@ -159,14 +160,22 @@ async function grantStoreAccess(userId, { storeId, accessRole }) {
 
   await usersRepository.grantStoreAccess(userId, parsedStoreId, accessRole);
 
-  // OAuth signups are permanently 'customer' until something promotes them -
-  // granting store access is that trigger, otherwise the JWT this user gets
-  // next login never reflects the access we just granted.
-  if (user.role === 'customer') {
-    await usersRepository.updateUserRole(userId, staffTierRoleFor(accessRole));
+  const grants = await usersRepository.findStoreAccessForUser(userId);
+
+  // OAuth accounts have no other way to become owner/staff - a grant is the
+  // only mechanism, so their role is kept in sync with the union of all
+  // their grants (not just the one just made) every time. Local accounts
+  // get their role deliberately chosen once at creation (createStaffUser)
+  // and are never touched here, and an existing admin is never demoted.
+  if (user.provider !== 'local' && user.role !== 'admin') {
+    const desiredRole = staffTierRoleFor(grants);
+
+    if (user.role !== desiredRole) {
+      await usersRepository.updateUserRole(userId, desiredRole);
+    }
   }
 
-  return usersRepository.findStoreAccessForUser(userId);
+  return grants;
 }
 
 async function revokeStoreAccess(userId, storeId) {

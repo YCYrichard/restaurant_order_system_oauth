@@ -1589,6 +1589,12 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   Widget _buildStoresPanel() {
+    // Creating a store is platform-level (POST /stores is requireAdmin-only
+    // server-side) - an owner reaching this page for their own store would
+    // only see this 403 on click, so it's hidden rather than shown broken,
+    // same as UsersPanel below.
+    final canCreateStore = context.watch<AuthController>().isAdmin;
+
     return Card(
       color: Colors.white,
       elevation: 0,
@@ -1616,11 +1622,12 @@ class _AdminPageState extends State<AdminPage> {
                   icon: const Icon(Icons.refresh),
                   tooltip: 'Refresh stores',
                 ),
-                IconButton(
-                  onPressed: _showCreateStoreDialog,
-                  icon: const Icon(Icons.add_business),
-                  tooltip: 'Create store',
-                ),
+                if (canCreateStore)
+                  IconButton(
+                    onPressed: _showCreateStoreDialog,
+                    icon: const Icon(Icons.add_business),
+                    tooltip: 'Create store',
+                  ),
               ],
             ),
             const SizedBox(height: 16),
@@ -1635,8 +1642,8 @@ class _AdminPageState extends State<AdminPage> {
               _buildEmptyState(
                 icon: Icons.store_outlined,
                 message: 'No stores found.',
-                buttonLabel: 'Create Store',
-                onPressed: _showCreateStoreDialog,
+                buttonLabel: canCreateStore ? 'Create Store' : null,
+                onPressed: canCreateStore ? _showCreateStoreDialog : null,
               )
             else
               Column(

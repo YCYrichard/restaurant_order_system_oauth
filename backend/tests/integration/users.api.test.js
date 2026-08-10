@@ -241,12 +241,12 @@ describe('POST /api/v1/users/:userId/store-access', () => {
 
   test('grants access and returns the updated grant list', async () => {
     db.execute
-      .mockResolvedValueOnce([[{ id: 2 }]]) // requireUser
+      .mockResolvedValueOnce([[{ id: 2, role: 'owner', provider: 'google' }]]) // requireUser
       .mockResolvedValueOnce([[{ id: 1 }]]) // findStoreById
       .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
       .mockResolvedValueOnce([
         [{ id: 5, store_id: 1, access_role: 'owner', store_name: 'Demo Store' }],
-      ]);
+      ]); // findStoreAccessForUser (grants) - already 'owner', no promotion needed
 
     const res = await request(app)
       .post('/api/v1/users/2/store-access')
@@ -255,17 +255,18 @@ describe('POST /api/v1/users/:userId/store-access', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.storeAccess).toHaveLength(1);
+    expect(db.execute).toHaveBeenCalledTimes(4);
   });
 
   test('promotes a customer to owner when granted owner access', async () => {
     db.execute
-      .mockResolvedValueOnce([[{ id: 2, role: 'customer' }]]) // requireUser
+      .mockResolvedValueOnce([[{ id: 2, role: 'customer', provider: 'google' }]]) // requireUser
       .mockResolvedValueOnce([[{ id: 1 }]]) // findStoreById
       .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
-      .mockResolvedValueOnce([{}]) // UPDATE users SET role
       .mockResolvedValueOnce([
         [{ id: 5, store_id: 1, access_role: 'owner', store_name: 'Demo Store' }],
-      ]);
+      ]) // findStoreAccessForUser (grants)
+      .mockResolvedValueOnce([{}]); // UPDATE users SET role
 
     const res = await request(app)
       .post('/api/v1/users/2/store-access')
@@ -274,17 +275,19 @@ describe('POST /api/v1/users/:userId/store-access', () => {
 
     expect(res.status).toBe(201);
     expect(db.execute).toHaveBeenCalledTimes(5);
-    expect(db.execute.mock.calls[3][0]).toMatch(/UPDATE users/);
-    expect(db.execute.mock.calls[3][1]).toEqual(['owner', 2]);
+    expect(db.execute.mock.calls[4][0]).toMatch(/UPDATE users/);
+    expect(db.execute.mock.calls[4][1]).toEqual(['owner', 2]);
   });
 
   test('promotes a customer to owner when granted manager access', async () => {
     db.execute
-      .mockResolvedValueOnce([[{ id: 2, role: 'customer' }]]) // requireUser
+      .mockResolvedValueOnce([[{ id: 2, role: 'customer', provider: 'google' }]]) // requireUser
       .mockResolvedValueOnce([[{ id: 1 }]]) // findStoreById
       .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
-      .mockResolvedValueOnce([{}]) // UPDATE users SET role
-      .mockResolvedValueOnce([[]]);
+      .mockResolvedValueOnce([
+        [{ id: 5, store_id: 1, access_role: 'manager', store_name: 'Demo Store' }],
+      ]) // findStoreAccessForUser (grants)
+      .mockResolvedValueOnce([{}]); // UPDATE users SET role
 
     const res = await request(app)
       .post('/api/v1/users/2/store-access')
@@ -292,16 +295,18 @@ describe('POST /api/v1/users/:userId/store-access', () => {
       .send({ storeId: 1, accessRole: 'manager' });
 
     expect(res.status).toBe(201);
-    expect(db.execute.mock.calls[3][1]).toEqual(['owner', 2]);
+    expect(db.execute.mock.calls[4][1]).toEqual(['owner', 2]);
   });
 
   test('promotes a customer to staff when granted staff access', async () => {
     db.execute
-      .mockResolvedValueOnce([[{ id: 2, role: 'customer' }]]) // requireUser
+      .mockResolvedValueOnce([[{ id: 2, role: 'customer', provider: 'google' }]]) // requireUser
       .mockResolvedValueOnce([[{ id: 1 }]]) // findStoreById
       .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
-      .mockResolvedValueOnce([{}]) // UPDATE users SET role
-      .mockResolvedValueOnce([[]]);
+      .mockResolvedValueOnce([
+        [{ id: 5, store_id: 1, access_role: 'staff', store_name: 'Demo Store' }],
+      ]) // findStoreAccessForUser (grants)
+      .mockResolvedValueOnce([{}]); // UPDATE users SET role
 
     const res = await request(app)
       .post('/api/v1/users/2/store-access')
@@ -309,15 +314,64 @@ describe('POST /api/v1/users/:userId/store-access', () => {
       .send({ storeId: 1, accessRole: 'staff' });
 
     expect(res.status).toBe(201);
-    expect(db.execute.mock.calls[3][1]).toEqual(['staff', 2]);
+    expect(db.execute.mock.calls[4][1]).toEqual(['staff', 2]);
   });
 
-  test('does not touch role for a user who is already staff-tier', async () => {
+  // Regression test for a real bug: an account first granted 'staff' access
+  // (promoted customer -> staff) was later granted 'owner' access on another
+  // store, but the role stayed stuck at 'staff' because the old logic only
+  // promoted starting from 'customer'. The role must now resync off the
+  // full set of grants on every call, so an upgrade actually takes effect.
+  test('upgrades an already-staff user to owner when a new grant adds owner-tier access', async () => {
     db.execute
-      .mockResolvedValueOnce([[{ id: 2, role: 'owner' }]]) // requireUser
+      .mockResolvedValueOnce([[{ id: 2, role: 'staff', provider: 'google' }]]) // requireUser
+      .mockResolvedValueOnce([[{ id: 3 }]]) // findStoreById
+      .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
+      .mockResolvedValueOnce([
+        [
+          { id: 5, store_id: 1, access_role: 'staff', store_name: 'Demo Store' },
+          { id: 6, store_id: 3, access_role: 'owner', store_name: 'Demo2' },
+        ],
+      ]) // findStoreAccessForUser (grants) - now spans two stores
+      .mockResolvedValueOnce([{}]); // UPDATE users SET role
+
+    const res = await request(app)
+      .post('/api/v1/users/2/store-access')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ storeId: 3, accessRole: 'owner' });
+
+    expect(res.status).toBe(201);
+    expect(db.execute).toHaveBeenCalledTimes(5);
+    expect(db.execute.mock.calls[4][0]).toMatch(/UPDATE users/);
+    expect(db.execute.mock.calls[4][1]).toEqual(['owner', 2]);
+  });
+
+  test('does not touch role for a local staff account, even with an owner-tier grant', async () => {
+    db.execute
+      .mockResolvedValueOnce([[{ id: 2, role: 'staff', provider: 'local' }]]) // requireUser
       .mockResolvedValueOnce([[{ id: 1 }]]) // findStoreById
       .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
-      .mockResolvedValueOnce([[]]);
+      .mockResolvedValueOnce([
+        [{ id: 5, store_id: 1, access_role: 'owner', store_name: 'Demo Store' }],
+      ]); // findStoreAccessForUser (grants)
+
+    const res = await request(app)
+      .post('/api/v1/users/2/store-access')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ storeId: 1, accessRole: 'owner' });
+
+    expect(res.status).toBe(201);
+    expect(db.execute).toHaveBeenCalledTimes(4);
+  });
+
+  test('does not touch role for an existing admin', async () => {
+    db.execute
+      .mockResolvedValueOnce([[{ id: 2, role: 'admin', provider: 'google' }]]) // requireUser
+      .mockResolvedValueOnce([[{ id: 1 }]]) // findStoreById
+      .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
+      .mockResolvedValueOnce([
+        [{ id: 5, store_id: 1, access_role: 'staff', store_name: 'Demo Store' }],
+      ]); // findStoreAccessForUser (grants)
 
     const res = await request(app)
       .post('/api/v1/users/2/store-access')
