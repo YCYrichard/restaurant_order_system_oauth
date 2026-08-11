@@ -15,6 +15,7 @@ jest.mock('../../src/services/store-hours.service', () => {
   return { ...actual, getStoreOpenState: jest.fn() };
 });
 jest.mock('../../src/repositories/coupons.repository');
+jest.mock('../../src/repositories/loyalty.repository');
 jest.mock('../../src/services/events.service');
 jest.mock('../../src/services/payments.service');
 jest.mock('../../src/services/notifications.service');
@@ -31,6 +32,7 @@ const storesRepository = require('../../src/repositories/stores.repository');
 const storeHoursService = require('../../src/services/store-hours.service');
 const couponsRepository = require('../../src/repositories/coupons.repository');
 const couponsService = require('../../src/services/coupons.service');
+const loyaltyRepository = require('../../src/repositories/loyalty.repository');
 const eventsService = require('../../src/services/events.service');
 const paymentsService = require('../../src/services/payments.service');
 const notificationsService = require('../../src/services/notifications.service');
@@ -734,6 +736,203 @@ describe('orders.service.createOrder coupon handling', () => {
   });
 });
 
+describe('orders.service.createOrder loyalty redemption', () => {
+  let mockConnection;
+
+  function loyaltyStore(overrides = {}) {
+    return {
+      id: 1,
+      name: 'Test Store',
+      timezone: 'Asia/Taipei',
+      loyalty_enabled: true,
+      loyalty_points_per_dollar: '1.00',
+      loyalty_point_value: '0.01',
+      loyalty_stackable_with_coupons: false,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockCatalog();
+    storeHoursService.getStoreOpenState.mockResolvedValue({ isOpen: true, reason: null });
+
+    mockConnection = {
+      beginTransaction: jest.fn().mockResolvedValue(undefined),
+      commit: jest.fn().mockResolvedValue(undefined),
+      rollback: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn(),
+    };
+
+    db.getConnection.mockResolvedValue(mockConnection);
+    ordersRepository.insertOrder.mockResolvedValue(42);
+    ordersRepository.insertOrderItems.mockResolvedValue([1001]);
+    ordersRepository.findOrderWithItems.mockResolvedValue({ id: 42 });
+  });
+
+  test('redeems points up to the order balance when requested', async () => {
+    storesRepository.findStoreById.mockResolvedValue(loyaltyStore());
+    loyaltyRepository.findBalance.mockResolvedValue(500);
+    loyaltyRepository.debitBalanceIfSufficient.mockResolvedValue(true);
+
+    // total is the pre-discount staleness check against the raw item
+    // subtotal (20), not the post-discount figure - matches the existing
+    // coupon tests' pattern (input.total stays the raw subtotal; the
+    // server-computed final total is asserted separately below).
+    await ordersService.createOrder({
+      ...validInput,
+      userId: 3,
+      redeemPoints: true,
+      total: 20,
+    });
+
+    expect(loyaltyRepository.debitBalanceIfSufficient).toHaveBeenCalledWith(
+      3,
+      1,
+      500,
+      mockConnection
+    );
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pointsRedeemed: 500,
+        pointsDiscountAmount: 5,
+        total: 15,
+      }),
+      mockConnection
+    );
+  });
+
+  test('does not redeem when the store has loyalty disabled', async () => {
+    storesRepository.findStoreById.mockResolvedValue(loyaltyStore({ loyalty_enabled: false }));
+
+    await ordersService.createOrder({
+      ...validInput,
+      userId: 3,
+      redeemPoints: true,
+      total: 20,
+    });
+
+    expect(loyaltyRepository.findBalance).not.toHaveBeenCalled();
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ pointsRedeemed: 0, pointsDiscountAmount: 0 }),
+      mockConnection
+    );
+  });
+
+  test('does not redeem when redeemPoints was not requested', async () => {
+    storesRepository.findStoreById.mockResolvedValue(loyaltyStore());
+
+    await ordersService.createOrder({ ...validInput, userId: 3, total: 20 });
+
+    expect(loyaltyRepository.findBalance).not.toHaveBeenCalled();
+  });
+
+  // Stacking is opt-in per store (stores.loyalty_stackable_with_coupons) -
+  // real platforms researched treat "coupon + points on one order" as a
+  // merchant decision, not a universal default.
+  test('skips redemption when a coupon already applied and stacking is off', async () => {
+    storesRepository.findStoreById.mockResolvedValue(
+      loyaltyStore({ loyalty_stackable_with_coupons: false })
+    );
+    couponsService.resolveDiscount.mockResolvedValue({
+      coupon: { id: 7, code: 'SAVE5' },
+      discountAmount: 5,
+    });
+    couponsRepository.incrementRedemptionCount.mockResolvedValue(true);
+
+    await ordersService.createOrder({
+      ...validInput,
+      userId: 3,
+      couponCode: 'SAVE5',
+      redeemPoints: true,
+      total: 20,
+    });
+
+    expect(loyaltyRepository.findBalance).not.toHaveBeenCalled();
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ discountAmount: 5, pointsRedeemed: 0 }),
+      mockConnection
+    );
+  });
+
+  test('stacks points on top of a coupon when the store allows it', async () => {
+    storesRepository.findStoreById.mockResolvedValue(
+      loyaltyStore({ loyalty_stackable_with_coupons: true })
+    );
+    couponsService.resolveDiscount.mockResolvedValue({
+      coupon: { id: 7, code: 'SAVE5' },
+      discountAmount: 5,
+    });
+    couponsRepository.incrementRedemptionCount.mockResolvedValue(true);
+    loyaltyRepository.findBalance.mockResolvedValue(200);
+    loyaltyRepository.debitBalanceIfSufficient.mockResolvedValue(true);
+
+    // subtotal 20, coupon takes 5 -> 15 remaining, 200 points at $0.01 = $2,
+    // final total = 20 - 5 - 2 = 13. input.total stays the raw subtotal (20).
+    await ordersService.createOrder({
+      ...validInput,
+      userId: 3,
+      couponCode: 'SAVE5',
+      redeemPoints: true,
+      total: 20,
+    });
+
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        discountAmount: 5,
+        pointsRedeemed: 200,
+        pointsDiscountAmount: 2,
+        total: 13,
+      }),
+      mockConnection
+    );
+  });
+
+  // The race this closes: two concurrent checkouts both resolving against
+  // the same stale balance before either's debit commits.
+  test('rolls back when the points balance changed before the debit landed', async () => {
+    storesRepository.findStoreById.mockResolvedValue(loyaltyStore());
+    loyaltyRepository.findBalance.mockResolvedValue(500);
+    loyaltyRepository.debitBalanceIfSufficient.mockResolvedValue(false);
+
+    await expect(
+      ordersService.createOrder({
+        ...validInput,
+        userId: 3,
+        redeemPoints: true,
+        total: 20,
+      })
+    ).rejects.toThrow(/balance changed/);
+
+    expect(mockConnection.rollback).toHaveBeenCalled();
+    expect(ordersRepository.insertOrder).not.toHaveBeenCalled();
+  });
+
+  test('records a redeem ledger entry for the applied points', async () => {
+    storesRepository.findStoreById.mockResolvedValue(loyaltyStore());
+    loyaltyRepository.findBalance.mockResolvedValue(500);
+    loyaltyRepository.debitBalanceIfSufficient.mockResolvedValue(true);
+
+    await ordersService.createOrder({
+      ...validInput,
+      userId: 3,
+      redeemPoints: true,
+      total: 20,
+    });
+
+    expect(loyaltyRepository.insertLedgerEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 3,
+        storeId: 1,
+        orderId: 42,
+        type: 'redeem',
+        pointsDelta: -500,
+      }),
+      mockConnection
+    );
+  });
+});
+
 describe('orders.service.updateOrderStatus', () => {
   const adminUser = { id: 1, role: 'admin' };
   const ownerUser = { id: 2, role: 'customer' };
@@ -950,6 +1149,76 @@ describe('orders.service.updateOrderStatus', () => {
     await expect(
       ordersService.updateOrderStatus(5, ownerUser, 'cancelled')
     ).rejects.toThrow(/Cannot transition/);
+  });
+
+  test('earns loyalty points when an order completes at a loyalty-enabled store', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      user_id: 3,
+      status: 'ready',
+      subtotal: '15.00',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+    ordersRepository.updateOrderStatus.mockResolvedValue(true);
+    ordersRepository.findOrderWithItems.mockResolvedValue({ id: 5, status: 'completed' });
+    storesRepository.findStoreById.mockResolvedValue({
+      id: 10,
+      loyalty_enabled: true,
+      loyalty_points_per_dollar: '1.00',
+    });
+
+    await ordersService.updateOrderStatus(5, ownerUser, 'completed');
+
+    expect(loyaltyRepository.adjustBalance).toHaveBeenCalledWith(3, 10, 15, undefined);
+    expect(ordersRepository.setPointsEarned).toHaveBeenCalledWith(5, 15);
+  });
+
+  // The key lifecycle decision this locks in: earning is keyed off order
+  // STATUS, never payment_status. A cash/manual order (likely the majority
+  // for this app's target restaurants) never reaches payment_status
+  // 'paid' at all - gating on that instead would silently break earning
+  // for most real orders.
+  test('still earns points for a cash order whose payment_status stays unpaid', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      user_id: 3,
+      status: 'ready',
+      subtotal: '15.00',
+      payment_status: 'unpaid',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+    ordersRepository.updateOrderStatus.mockResolvedValue(true);
+    ordersRepository.findOrderWithItems.mockResolvedValue({ id: 5, status: 'completed' });
+    storesRepository.findStoreById.mockResolvedValue({
+      id: 10,
+      loyalty_enabled: true,
+      loyalty_points_per_dollar: '1.00',
+    });
+
+    await ordersService.updateOrderStatus(5, ownerUser, 'completed');
+
+    expect(loyaltyRepository.adjustBalance).toHaveBeenCalledWith(3, 10, 15, undefined);
+  });
+
+  test('does not earn points when the store has loyalty disabled', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      user_id: 3,
+      status: 'ready',
+      subtotal: '15.00',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+    ordersRepository.updateOrderStatus.mockResolvedValue(true);
+    ordersRepository.findOrderWithItems.mockResolvedValue({ id: 5, status: 'completed' });
+    storesRepository.findStoreById.mockResolvedValue({ id: 10, loyalty_enabled: false });
+
+    await ordersService.updateOrderStatus(5, ownerUser, 'completed');
+
+    expect(loyaltyRepository.adjustBalance).not.toHaveBeenCalled();
+    expect(ordersRepository.setPointsEarned).not.toHaveBeenCalled();
   });
 
   test('an admin bypasses the store-access check entirely', async () => {
@@ -1176,5 +1445,23 @@ describe('orders.service.refundOrder', () => {
     await expect(
       ordersService.refundOrder(5, { id: 1, role: 'admin' }, { amount: 0 })
     ).rejects.toThrow(ordersService.OrderValidationError);
+  });
+
+  test('claws back earned points proportional to the refund amount', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({ ...order, points_earned: 20 });
+    paymentsService.refundPayment.mockResolvedValue(null);
+
+    // 5 of a 20.00 total refunded (25%) -> 5 of 20 points clawed back.
+    await ordersService.refundOrder(5, { id: 1, role: 'admin' }, { amount: 5 });
+
+    expect(loyaltyRepository.adjustBalance).toHaveBeenCalledWith(2, 10, -5, mockConnection);
+  });
+
+  test('does not touch the loyalty ledger when the order never earned points', async () => {
+    paymentsService.refundPayment.mockResolvedValue(null);
+
+    await ordersService.refundOrder(5, { id: 1, role: 'admin' }, { amount: 5 });
+
+    expect(loyaltyRepository.adjustBalance).not.toHaveBeenCalled();
   });
 });

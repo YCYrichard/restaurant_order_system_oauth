@@ -10,6 +10,7 @@ import '../../core/auth/auth_controller.dart';
 import '../../core/constants/app_config.dart';
 import 'widgets/audit_log_panel.dart';
 import 'widgets/coupons_panel.dart';
+import 'widgets/loyalty_panel.dart';
 import 'widgets/modifiers_panel.dart';
 import 'widgets/orders_panel.dart';
 import 'widgets/reports_panel.dart';
@@ -1438,6 +1439,11 @@ class _AdminPageState extends State<AdminPage> {
         title: 'Coupons',
         icon: Icons.local_offer_outlined,
         content: CouponsPanel(selectedStore: selectedStore),
+      ),
+      _AdminTab(
+        title: 'Loyalty',
+        icon: Icons.card_giftcard_outlined,
+        content: LoyaltyPanel(selectedStore: selectedStore),
       ),
       _AdminTab(
         title: 'Reports',

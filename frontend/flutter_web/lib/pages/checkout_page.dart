@@ -71,6 +71,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool _loadingPickupSlots = true;
   String? _selectedReadyAt;
 
+  bool _loyaltyEnabled = false;
+  double _loyaltyPointValue = 0.01;
+  int _pointsBalance = 0;
+  bool _redeemPoints = false;
+
   @override
   void initState() {
     super.initState();
@@ -172,6 +177,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
       _storeId = storeId;
 
+      final loyaltyEnabledRaw = store?['loyalty_enabled'];
+      _loyaltyEnabled = loyaltyEnabledRaw == true ||
+          loyaltyEnabledRaw == 1 ||
+          loyaltyEnabledRaw == '1';
+      _loyaltyPointValue =
+          double.tryParse('${store?['loyalty_point_value'] ?? 0.01}') ?? 0.01;
+
       final products = await MenuRepository.fetchProducts(storeId);
 
       if (!mounted) return;
@@ -194,6 +206,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
         _products = products;
         _loadingProducts = false;
       });
+
+      if (_loyaltyEnabled) {
+        _loadLoyaltyBalance();
+      }
     } on ApiException catch (error) {
       if (!mounted) return;
 
@@ -208,6 +224,31 @@ class _CheckoutPageState extends State<CheckoutPage> {
         _loadError = "Unable to load this store's menu. Please try again.";
         _loadingProducts = false;
       });
+    }
+  }
+
+  // Balance is customer-specific, so this needs the auth token - unlike
+  // loyalty_enabled/loyalty_point_value, which come free with the public
+  // store lookup above since they're just store config, not account data.
+  Future<void> _loadLoyaltyBalance() async {
+    final storeId = _storeId;
+    final auth = context.read<AuthController>();
+
+    if (storeId == null || !auth.isLoggedIn) return;
+
+    try {
+      final response =
+          await auth.authorizedRequest('GET', '/api/v1/loyalty/balance/$storeId');
+
+      if (!mounted || response.statusCode != 200) return;
+
+      final decoded = jsonDecode(response.body);
+      setState(() {
+        _pointsBalance = decoded is Map ? (decoded['balance'] as int? ?? 0) : 0;
+      });
+    } catch (_) {
+      // A balance that fails to load just means the redeem toggle doesn't
+      // show - not worth surfacing as an error on the checkout page.
     }
   }
 
@@ -314,6 +355,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
       'couponCode': _couponController.text.trim().isEmpty
           ? null
           : _couponController.text.trim(),
+      // Only a boolean, never a point count or dollar amount - the server
+      // resolves exactly how many points apply (cap-and-apply, up to the
+      // order balance), so there's nothing here a client could inflate.
+      'redeemPoints': _redeemPoints,
     };
 
     try {
@@ -625,6 +670,26 @@ class _CheckoutPageState extends State<CheckoutPage> {
                         color: Color(0xFF77716D),
                       ),
                     ),
+                    if (_loyaltyEnabled && _pointsBalance > 0) ...[
+                      const SizedBox(height: 12),
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        value: _redeemPoints,
+                        onChanged: (value) =>
+                            setState(() => _redeemPoints = value ?? false),
+                        title: Text(
+                          'Apply your rewards (\$'
+                          '${(_pointsBalance * _loyaltyPointValue).toStringAsFixed(2)} '
+                          'available)',
+                        ),
+                        subtitle: const Text(
+                          'Applied up to your order balance - any points left '
+                          'over stay banked for next time.',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
                     if (_paymentConfig.isCard) ...[
                       const SizedBox(height: 28),
                       const Text(

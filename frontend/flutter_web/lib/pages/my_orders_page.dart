@@ -24,12 +24,15 @@ class _MyOrdersPageState extends State<MyOrdersPage> {
   bool _loading = true;
   String? _error;
 
+  List<Map<String, dynamic>> _loyaltyAccounts = [];
+
   EventStreamClient? _events;
 
   @override
   void initState() {
     super.initState();
     _loadOrders();
+    _loadLoyaltyAccounts();
 
     // Live status: the kitchen bumping a ticket reaches the customer here
     // without them refreshing.
@@ -132,6 +135,30 @@ class _MyOrdersPageState extends State<MyOrdersPage> {
     }
   }
 
+  Future<void> _loadLoyaltyAccounts() async {
+    final auth = context.read<AuthController>();
+
+    try {
+      final response =
+          await auth.authorizedRequest('GET', '/api/v1/loyalty/accounts');
+
+      if (!mounted || response.statusCode != 200) return;
+
+      final decoded = jsonDecode(response.body);
+      final accounts = decoded is Map && decoded['accounts'] is List
+          ? List<Map<String, dynamic>>.from(
+              (decoded['accounts'] as List)
+                  .whereType<Map>()
+                  .map((item) => Map<String, dynamic>.from(item)),
+            )
+          : <Map<String, dynamic>>[];
+
+      setState(() => _loyaltyAccounts = accounts);
+    } catch (_) {
+      // Non-critical: the order list itself already loaded independently.
+    }
+  }
+
   Color _statusColor(String status) {
     switch (status) {
       case 'pending':
@@ -181,6 +208,10 @@ class _MyOrdersPageState extends State<MyOrdersPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (_loyaltyAccounts.isNotEmpty) ...[
+                  _buildLoyaltySummary(),
+                  const SizedBox(height: 16),
+                ],
                 if (_loading)
                   const Center(
                     child: Padding(
@@ -222,6 +253,54 @@ class _MyOrdersPageState extends State<MyOrdersPage> {
     );
   }
 
+  Widget _buildLoyaltySummary() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E1),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.stars_rounded, color: Colors.amber.shade800, size: 20),
+              const SizedBox(width: 8),
+              const Text(
+                'Rewards balance',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ..._loyaltyAccounts.map((account) {
+            final storeName = account['store_name']?.toString() ?? 'Store';
+            final balance =
+                int.tryParse(account['balance']?.toString() ?? '0') ?? 0;
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                children: [
+                  Expanded(child: Text(storeName)),
+                  Text(
+                    '$balance pts',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: Colors.amber.shade800,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
   Widget _buildEmptyState() {
     return Container(
       width: double.infinity,
@@ -256,6 +335,13 @@ class _MyOrdersPageState extends State<MyOrdersPage> {
     final total = double.tryParse(order['total'].toString()) ?? 0;
     final discount =
         double.tryParse(order['discount_amount']?.toString() ?? '0') ?? 0;
+    final pointsDiscount =
+        double.tryParse(order['points_discount_amount']?.toString() ?? '0') ??
+            0;
+    final pointsRedeemed =
+        int.tryParse(order['points_redeemed']?.toString() ?? '0') ?? 0;
+    final pointsEarned =
+        int.tryParse(order['points_earned']?.toString() ?? '0') ?? 0;
     final createdAt = order['created_at']?.toString();
     final items =
         order['items'] is List ? List.from(order['items']) : const [];
@@ -316,6 +402,24 @@ class _MyOrdersPageState extends State<MyOrdersPage> {
                         style: const TextStyle(
                           fontSize: 11,
                           color: Colors.green,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    if (pointsDiscount > 0)
+                      Text(
+                        '$pointsRedeemed pts redeemed (-\$${pointsDiscount.toStringAsFixed(2)})',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.green,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    if (pointsEarned > 0)
+                      Text(
+                        '+$pointsEarned pts earned',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.amber.shade800,
                           fontWeight: FontWeight.w700,
                         ),
                       ),

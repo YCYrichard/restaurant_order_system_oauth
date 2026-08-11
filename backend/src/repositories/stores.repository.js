@@ -271,6 +271,26 @@ async function updateStore(storeId, fields) {
     params.push(fields.minPrepMinutes);
   }
 
+  if (fields.loyaltyEnabled !== undefined) {
+    assignments.push('loyalty_enabled = ?');
+    params.push(fields.loyaltyEnabled ? 1 : 0);
+  }
+
+  if (fields.loyaltyPointsPerDollar !== undefined) {
+    assignments.push('loyalty_points_per_dollar = ?');
+    params.push(fields.loyaltyPointsPerDollar);
+  }
+
+  if (fields.loyaltyPointValue !== undefined) {
+    assignments.push('loyalty_point_value = ?');
+    params.push(fields.loyaltyPointValue);
+  }
+
+  if (fields.loyaltyStackableWithCoupons !== undefined) {
+    assignments.push('loyalty_stackable_with_coupons = ?');
+    params.push(fields.loyaltyStackableWithCoupons ? 1 : 0);
+  }
+
   params.push(storeId);
 
   const [result] = await db.execute(

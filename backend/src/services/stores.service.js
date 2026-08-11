@@ -24,6 +24,10 @@ function normalizeInput({
   taxRate,
   taxInclusive,
   minPrepMinutes,
+  loyaltyEnabled,
+  loyaltyPointsPerDollar,
+  loyaltyPointValue,
+  loyaltyStackableWithCoupons,
 }) {
   const trimmedName = typeof name === 'string' ? name.trim() : '';
 
@@ -66,6 +70,41 @@ function normalizeInput({
     }
 
     normalized.minPrepMinutes = minutes;
+  }
+
+  // Loyalty settings, all optional on update for the same reason as tax/
+  // prep time above.
+  if (loyaltyEnabled !== undefined) {
+    normalized.loyaltyEnabled = loyaltyEnabled === true || loyaltyEnabled === 'true';
+  }
+
+  if (loyaltyPointsPerDollar !== undefined) {
+    const rate = Number(loyaltyPointsPerDollar);
+
+    if (!Number.isFinite(rate) || rate <= 0 || rate > 100) {
+      throw new StoreValidationError(
+        'loyaltyPointsPerDollar must be a number between 0 and 100'
+      );
+    }
+
+    normalized.loyaltyPointsPerDollar = rate;
+  }
+
+  if (loyaltyPointValue !== undefined) {
+    const value = Number(loyaltyPointValue);
+
+    if (!Number.isFinite(value) || value <= 0 || value > 1) {
+      throw new StoreValidationError(
+        'loyaltyPointValue must be a number between 0 and 1 (dollars of discount per point)'
+      );
+    }
+
+    normalized.loyaltyPointValue = value;
+  }
+
+  if (loyaltyStackableWithCoupons !== undefined) {
+    normalized.loyaltyStackableWithCoupons =
+      loyaltyStackableWithCoupons === true || loyaltyStackableWithCoupons === 'true';
   }
 
   return normalized;

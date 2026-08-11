@@ -8,6 +8,8 @@ const modifiersRepository = require('../repositories/modifiers.repository');
 const modifiersService = require('./modifiers.service');
 const couponsRepository = require('../repositories/coupons.repository');
 const couponsService = require('./coupons.service');
+const loyaltyRepository = require('../repositories/loyalty.repository');
+const loyaltyService = require('./loyalty.service');
 const paymentsService = require('./payments.service');
 const eventsService = require('./events.service');
 const notificationsService = require('./notifications.service');
@@ -306,6 +308,7 @@ async function createOrder(input) {
     fulfillmentType,
     tableNumber,
     couponCode,
+    redeemPoints,
   } = input;
 
   // Enforced here rather than only in the UI - otherwise the rule is
@@ -377,12 +380,58 @@ async function createOrder(input) {
       }
     }
 
+    let pointsRedeemed = 0;
+    let pointsDiscountAmount = 0;
+
+    // Skipped (not rejected) when a coupon already applied and this store
+    // hasn't opted into stacking - the customer-facing checkout should
+    // already hide the redeem toggle in that case, so reaching here with
+    // both set is either an unstacked-config store or a stale client, not
+    // an attack worth a hard error over.
+    if (
+      redeemPoints &&
+      userId &&
+      store.loyalty_enabled &&
+      (discountAmount <= 0 || store.loyalty_stackable_with_coupons)
+    ) {
+      const resolved = await loyaltyService.resolveRedemption(
+        {
+          userId,
+          storeId,
+          store,
+          remainingAfterCoupon: roundMoney(subtotal - discountAmount),
+        },
+        connection
+      );
+
+      pointsRedeemed = resolved.pointsRedeemed;
+      pointsDiscountAmount = resolved.discountAmount;
+
+      if (pointsRedeemed > 0) {
+        await loyaltyService.reserveRedemption(
+          userId,
+          storeId,
+          pointsRedeemed,
+          connection
+        );
+      }
+    }
+
     // Tax is computed on the post-discount figure - a discount reduces the
-    // taxable amount, it isn't applied after tax.
-    const taxed = taxService.computeTax(roundMoney(subtotal - discountAmount), {
-      taxRate: store.tax_rate,
-      taxInclusive: store.tax_inclusive,
-    });
+    // taxable amount, it isn't applied after tax. Points discount is
+    // subtracted the same way as the coupon discount, and for the same
+    // reason it's computed from the ALREADY-discounted subtotal above
+    // (never the raw subtotal): earning points on money a coupon or a
+    // points redemption already took off the bill would let redeeming
+    // points itself earn more points, an unbounded "points buy points"
+    // loop.
+    const taxed = taxService.computeTax(
+      roundMoney(subtotal - discountAmount - pointsDiscountAmount),
+      {
+        taxRate: store.tax_rate,
+        taxInclusive: store.tax_inclusive,
+      }
+    );
 
     orderId = await ordersRepository.insertOrder(
       {
@@ -395,6 +444,8 @@ async function createOrder(input) {
         taxInclusive: taxed.taxInclusive,
         discountAmount,
         couponCode: appliedCoupon ? appliedCoupon.code : null,
+        pointsRedeemed,
+        pointsDiscountAmount,
         customerName,
         customerPhone,
         customerEmail,
@@ -455,6 +506,20 @@ async function createOrder(input) {
         }
         throw error;
       }
+    }
+
+    if (pointsRedeemed > 0) {
+      await loyaltyRepository.insertLedgerEntry(
+        {
+          userId,
+          storeId,
+          orderId,
+          type: 'redeem',
+          pointsDelta: -pointsRedeemed,
+          description: 'Redeemed at checkout',
+        },
+        connection
+      );
     }
 
     await connection.commit();
@@ -532,6 +597,25 @@ async function updateOrderStatus(orderId, user, status) {
   }
 
   await ordersRepository.updateOrderStatus(orderId, status);
+
+  // Earn only fires on 'completed', not payment_status - cash/manual
+  // orders (likely the majority for this app's target restaurants) never
+  // reach payment_status 'paid' at all, so gating on that would silently
+  // break earning for most real orders. 'completed' is a terminal status
+  // TERMINAL_STATUSES blocks any further transition out of, so a
+  // cancelled order structurally can never also reach 'completed' - no
+  // special-casing needed for cancellation.
+  if (status === 'completed') {
+    const store = await storesRepository.findStoreById(order.store_id);
+
+    if (store?.loyalty_enabled) {
+      const earned = await loyaltyService.earnPointsForOrder(order, store);
+
+      if (earned > 0) {
+        await ordersRepository.setPointsEarned(orderId, earned);
+      }
+    }
+  }
 
   const updated = await ordersRepository.findOrderWithItems(orderId);
 
@@ -666,6 +750,11 @@ async function refundOrder(orderId, user, { amount, reason }) {
       },
       connection
     );
+
+    // Clawed back proportionally to the refunded amount - redeemed points
+    // are never restored, deliberately mirroring the coupon-redemption
+    // precedent (coupon_redemptions is never reversed on refund either).
+    await loyaltyService.clawBackForRefund(order, roundMoney(parsedAmount), connection);
 
     await connection.commit();
   } catch (error) {
