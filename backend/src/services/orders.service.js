@@ -614,25 +614,46 @@ async function updateOrderStatus(orderId, user, status) {
     );
   }
 
-  await ordersRepository.updateOrderStatus(orderId, status);
+  // Resolved before opening a connection - a pure read, same shape as
+  // createOrder looking up the store before it transacts.
+  const store =
+    status === 'completed'
+      ? await storesRepository.findStoreById(order.store_id)
+      : null;
 
-  // Earn only fires on 'completed', not payment_status - cash/manual
-  // orders (likely the majority for this app's target restaurants) never
-  // reach payment_status 'paid' at all, so gating on that would silently
-  // break earning for most real orders. 'completed' is a terminal status
-  // TERMINAL_STATUSES blocks any further transition out of, so a
-  // cancelled order structurally can never also reach 'completed' - no
-  // special-casing needed for cancellation.
-  if (status === 'completed') {
-    const store = await storesRepository.findStoreById(order.store_id);
+  // Wrapped in a transaction so a mid-sequence failure can't leave the
+  // status change committed with points never credited, or the balance
+  // cache updated without its matching ledger entry - the same shape of
+  // bug the payment/refund transactions elsewhere in this file already
+  // guard against. This was previously three separate unguarded writes.
+  const connection = await db.getConnection();
 
-    if (store?.loyalty_enabled) {
-      const earned = await loyaltyService.earnPointsForOrder(order, store);
+  try {
+    await connection.beginTransaction();
+
+    await ordersRepository.updateOrderStatus(orderId, status, connection);
+
+    // Earn only fires on 'completed', not payment_status - cash/manual
+    // orders (likely the majority for this app's target restaurants) never
+    // reach payment_status 'paid' at all, so gating on that would silently
+    // break earning for most real orders. 'completed' is a terminal status
+    // TERMINAL_STATUSES blocks any further transition out of, so a
+    // cancelled order structurally can never also reach 'completed' - no
+    // special-casing needed for cancellation.
+    if (status === 'completed' && store?.loyalty_enabled) {
+      const earned = await loyaltyService.earnPointsForOrder(order, store, connection);
 
       if (earned > 0) {
-        await ordersRepository.setPointsEarned(orderId, earned);
+        await ordersRepository.setPointsEarned(orderId, earned, connection);
       }
     }
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
   }
 
   const updated = await ordersRepository.findOrderWithItems(orderId);

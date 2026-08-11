@@ -7,6 +7,7 @@ process.env.JWT_SECRET = 'test_secret';
 
 jest.mock('../../src/config/db', () => ({
   execute: jest.fn(),
+  getConnection: jest.fn(),
 }));
 
 const request = require('supertest');
@@ -251,9 +252,19 @@ describe('access tier boundary: staff vs owner-tier actions', () => {
     db.execute
       .mockResolvedValueOnce([[{ id: 5, store_id: 5, status: 'pending' }]]) // findOrderById
       .mockResolvedValueOnce([[{ access_role: 'staff' }]]) // staff-tier grant
-      .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE status
       .mockResolvedValueOnce([[{ id: 5, store_id: 5, status: 'confirmed' }]]) // findOrderWithItems: order row
       .mockResolvedValueOnce([[]]); // findOrderWithItems: order_items join, none
+
+    // The status write (and, for a 'completed' transition, the loyalty
+    // credit) runs in its own transaction - see orders.service.js#updateOrderStatus.
+    const mockConnection = {
+      execute: jest.fn().mockResolvedValue([{ affectedRows: 1 }]), // UPDATE status
+      beginTransaction: jest.fn().mockResolvedValue(undefined),
+      commit: jest.fn().mockResolvedValue(undefined),
+      rollback: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn(),
+    };
+    db.getConnection.mockResolvedValue(mockConnection);
 
     const res = await request(app)
       .patch('/orders/5/status')

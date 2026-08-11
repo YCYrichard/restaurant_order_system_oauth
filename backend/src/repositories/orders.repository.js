@@ -158,8 +158,8 @@ async function hasStoreAccess(userId, storeId) {
   return rows[0]?.access_role ?? null;
 }
 
-async function updateOrderStatus(orderId, status) {
-  const [result] = await db.execute(
+async function updateOrderStatus(orderId, status, connection = db) {
+  const [result] = await connection.execute(
     `
       UPDATE orders
       SET status = ?

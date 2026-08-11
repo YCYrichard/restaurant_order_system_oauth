@@ -1161,7 +1161,20 @@ describe('orders.service.updateOrderStatus', () => {
   const adminUser = { id: 1, role: 'admin' };
   const ownerUser = { id: 2, role: 'customer' };
 
-  beforeEach(() => jest.clearAllMocks());
+  let mockConnection;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+
+    mockConnection = {
+      beginTransaction: jest.fn().mockResolvedValue(undefined),
+      commit: jest.fn().mockResolvedValue(undefined),
+      rollback: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn(),
+    };
+
+    db.getConnection.mockResolvedValue(mockConnection);
+  });
 
   test('rejects an invalid status value before touching the database', async () => {
     await expect(
@@ -1213,7 +1226,8 @@ describe('orders.service.updateOrderStatus', () => {
 
     expect(ordersRepository.updateOrderStatus).toHaveBeenCalledWith(
       5,
-      'confirmed'
+      'confirmed',
+      mockConnection
     );
     expect(result).toEqual({ id: 5, status: 'confirmed' });
   });
@@ -1305,7 +1319,8 @@ describe('orders.service.updateOrderStatus', () => {
 
     expect(ordersRepository.updateOrderStatus).toHaveBeenCalledWith(
       5,
-      'confirmed'
+      'confirmed',
+      mockConnection
     );
     expect(result.status).toBe('confirmed');
   });
@@ -1394,8 +1409,9 @@ describe('orders.service.updateOrderStatus', () => {
 
     await ordersService.updateOrderStatus(5, ownerUser, 'completed');
 
-    expect(loyaltyRepository.adjustBalance).toHaveBeenCalledWith(3, 10, 15, undefined);
-    expect(ordersRepository.setPointsEarned).toHaveBeenCalledWith(5, 15);
+    expect(loyaltyRepository.adjustBalance).toHaveBeenCalledWith(3, 10, 15, mockConnection);
+    expect(ordersRepository.setPointsEarned).toHaveBeenCalledWith(5, 15, mockConnection);
+    expect(mockConnection.commit).toHaveBeenCalled();
   });
 
   // The key lifecycle decision this locks in: earning is keyed off order
@@ -1423,7 +1439,7 @@ describe('orders.service.updateOrderStatus', () => {
 
     await ordersService.updateOrderStatus(5, ownerUser, 'completed');
 
-    expect(loyaltyRepository.adjustBalance).toHaveBeenCalledWith(3, 10, 15, undefined);
+    expect(loyaltyRepository.adjustBalance).toHaveBeenCalledWith(3, 10, 15, mockConnection);
   });
 
   test('does not earn points when the store has loyalty disabled', async () => {
@@ -1443,6 +1459,38 @@ describe('orders.service.updateOrderStatus', () => {
 
     expect(loyaltyRepository.adjustBalance).not.toHaveBeenCalled();
     expect(ordersRepository.setPointsEarned).not.toHaveBeenCalled();
+  });
+
+  // Regression test for the atomicity fix: previously the status write,
+  // the balance credit, and the order's points_earned snapshot were three
+  // separate unguarded writes - a failure partway through could leave an
+  // order marked completed with points never credited, or the balance
+  // cache updated without its ledger entry. All three must now roll back
+  // together.
+  test('rolls back the status change if crediting points fails', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      id: 5,
+      store_id: 10,
+      user_id: 3,
+      status: 'ready',
+      subtotal: '15.00',
+    });
+    ordersRepository.hasStoreAccess.mockResolvedValue(true);
+    ordersRepository.updateOrderStatus.mockResolvedValue(true);
+    storesRepository.findStoreById.mockResolvedValue({
+      id: 10,
+      loyalty_enabled: true,
+      loyalty_points_per_dollar: '1.00',
+    });
+    loyaltyRepository.adjustBalance.mockRejectedValueOnce(new Error('DB blip'));
+
+    await expect(
+      ordersService.updateOrderStatus(5, ownerUser, 'completed')
+    ).rejects.toThrow('DB blip');
+
+    expect(mockConnection.rollback).toHaveBeenCalled();
+    expect(mockConnection.commit).not.toHaveBeenCalled();
+    expect(ordersRepository.findOrderWithItems).not.toHaveBeenCalled();
   });
 
   test('an admin bypasses the store-access check entirely', async () => {

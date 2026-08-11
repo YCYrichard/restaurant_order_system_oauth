@@ -732,7 +732,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
                         label: 'Carrier number (手機條碼, e.g. /AB1234+)',
                         icon: Icons.smartphone_outlined,
                         textCapitalization: TextCapitalization.characters,
-                        enabled: _einvoiceTaxIdController.text.isEmpty && !_einvoiceDonate,
+                        enabled: _einvoiceTaxIdController.text.trim().isEmpty &&
+                            !_einvoiceDonate,
                         onChanged: (_) => setState(() {}),
                       ),
                       const SizedBox(height: 8),
@@ -741,15 +742,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
                         label: 'Company tax ID (統編, optional)',
                         icon: Icons.receipt_outlined,
                         keyboardType: TextInputType.number,
-                        enabled: _einvoiceCarrierController.text.isEmpty && !_einvoiceDonate,
+                        enabled: _einvoiceCarrierController.text.trim().isEmpty &&
+                            !_einvoiceDonate,
                         onChanged: (_) => setState(() {}),
                       ),
                       CheckboxListTile(
                         contentPadding: EdgeInsets.zero,
                         controlAffinity: ListTileControlAffinity.leading,
                         value: _einvoiceDonate,
-                        onChanged: (_einvoiceTaxIdController.text.isNotEmpty ||
-                                _einvoiceCarrierController.text.isNotEmpty)
+                        onChanged: (_einvoiceTaxIdController.text.trim().isNotEmpty ||
+                                _einvoiceCarrierController.text.trim().isNotEmpty)
                             ? null
                             : (value) => setState(() => _einvoiceDonate = value ?? false),
                         title: const Text('Donate this invoice to charity'),
