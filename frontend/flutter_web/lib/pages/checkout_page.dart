@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../core/api/api_client.dart';
+import '../core/api/response_message.dart';
 import '../core/auth/auth_controller.dart';
 import '../core/notifications/browser_notifier.dart';
 import '../core/payments/payment_config.dart';
@@ -391,10 +392,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   'Failed to place order. Please try again.';
         });
       }
-    } catch (e) {
+    } catch (_) {
       setState(() {
         _isSubmitting = false;
-        _errorMessage = 'Network error: ${e.toString()}';
+        _errorMessage = networkErrorMessage();
       });
     }
   }

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/auth/auth_controller.dart';
+import '../../../core/api/response_message.dart';
 
 /// Modifier groups (Size, Add-ons, ...) and their options, plus which
 /// products each group is attached to. Groups are store-level and reusable,
@@ -89,7 +90,7 @@ class _ModifiersPanelState extends State<ModifiersPanel> {
       });
     } catch (error) {
       setState(() => _loading = false);
-      _showMessage('Network error loading modifiers: $error', isError: true);
+      _showMessage(networkErrorMessage(), isError: true);
     }
   }
 

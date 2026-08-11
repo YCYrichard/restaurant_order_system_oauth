@@ -21,6 +21,21 @@ emitter.setMaxListeners(100);
 const STORE_CHANNEL = (storeId) => `store:${storeId}`;
 const USER_CHANNEL = (userId) => `user:${userId}`;
 
+// setMaxListeners above only raises a console warning threshold, not an
+// enforced cap - any authenticated account could otherwise open unbounded
+// concurrent long-lived SSE connections. This is the actual limit,
+// generous enough for many kitchen stations/devices genuinely watching one
+// store at once.
+const MAX_CONNECTIONS_PER_CHANNEL = 20;
+
+class TooManyConnectionsError extends Error {
+  constructor(message = 'Too many open connections for this stream') {
+    super(message);
+    this.status = 429;
+    this.code = 'TOO_MANY_CONNECTIONS';
+  }
+}
+
 /// Fan an order event out to the store's staff (kitchen displays) and, when
 /// the order belongs to a signed-in customer, to that customer as well.
 function publishOrderEvent(event) {
@@ -37,6 +52,11 @@ function publishOrderEvent(event) {
 /// connection closes or listeners accumulate for the life of the process.
 function subscribeToStore(storeId, listener) {
   const channel = STORE_CHANNEL(storeId);
+
+  if (emitter.listenerCount(channel) >= MAX_CONNECTIONS_PER_CHANNEL) {
+    throw new TooManyConnectionsError();
+  }
+
   emitter.on(channel, listener);
 
   return () => emitter.off(channel, listener);
@@ -44,6 +64,11 @@ function subscribeToStore(storeId, listener) {
 
 function subscribeToUser(userId, listener) {
   const channel = USER_CHANNEL(userId);
+
+  if (emitter.listenerCount(channel) >= MAX_CONNECTIONS_PER_CHANNEL) {
+    throw new TooManyConnectionsError();
+  }
+
   emitter.on(channel, listener);
 
   return () => emitter.off(channel, listener);
@@ -58,6 +83,7 @@ function listenerCount() {
 }
 
 module.exports = {
+  TooManyConnectionsError,
   publishOrderEvent,
   subscribeToStore,
   subscribeToUser,

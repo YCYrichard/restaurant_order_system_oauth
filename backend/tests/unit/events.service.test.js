@@ -93,6 +93,24 @@ describe('events.service', () => {
     expect(eventsService.listenerCount()).toBe(before);
   });
 
+  // setMaxListeners(100) only raises Node's own console-warning threshold -
+  // this confirms the actual enforced cap, since nothing previously stopped
+  // one account from opening unbounded concurrent SSE connections.
+  test('rejects a new subscription once a channel is at its connection cap', () => {
+    const storeId = 12345;
+    const unsubscribers = [];
+
+    for (let i = 0; i < 20; i += 1) {
+      unsubscribers.push(eventsService.subscribeToStore(storeId, jest.fn()));
+    }
+
+    expect(() => eventsService.subscribeToStore(storeId, jest.fn())).toThrow(
+      eventsService.TooManyConnectionsError
+    );
+
+    unsubscribers.forEach((unsubscribe) => unsubscribe());
+  });
+
   test('repeated subscribe/unsubscribe cycles do not leak', () => {
     const before = eventsService.listenerCount();
 

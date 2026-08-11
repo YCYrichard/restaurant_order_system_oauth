@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const db = require('../config/db');
 const env = require('../config/env');
 const tokenService = require('../services/token.service');
+const loginLockoutService = require('../services/login-lockout.service');
 
 const {
   buildGoogleAuthUrl,
@@ -20,11 +21,21 @@ const FRONTEND_URL = env.FRONTEND_URL;
 const REFRESH_COOKIE_NAME = 'refresh_token';
 const REFRESH_COOKIE_PATH = '/auth';
 
+// Defaults to secure - a deploy is only ever insecure by explicit opt-out
+// (local dev over plain HTTP), never by forgetting to set NODE_ENV to
+// exactly the string 'production'. The old `NODE_ENV === 'production'`
+// check meant any other env name (e.g. 'staging') silently got a cookie
+// deliverable over plain HTTP.
+const COOKIE_SECURE = process.env.COOKIE_SECURE !== 'false';
+
 function setRefreshCookie(res, token) {
   res.cookie(REFRESH_COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    secure: COOKIE_SECURE,
+    // SameSite=None requires Secure, so these two must move together - a
+    // non-secure cookie falls back to Lax, which is what local http dev
+    // needs anyway since there's no cross-origin scheme to satisfy.
+    sameSite: COOKIE_SECURE ? 'none' : 'lax',
     path: REFRESH_COOKIE_PATH,
     maxAge: tokenService.REFRESH_TOKEN_TTL_MS,
   });
@@ -33,6 +44,14 @@ function setRefreshCookie(res, token) {
 function clearRefreshCookie(res) {
   res.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
 }
+
+// A valid bcrypt hash of no real password - compared against on every
+// unknown-username login attempt so that branch takes roughly the same time
+// as a real bcrypt.compare, closing the timing side-channel that would
+// otherwise let an attacker distinguish "no such account" from "wrong
+// password" by response latency alone.
+const DUMMY_PASSWORD_HASH =
+  '$2b$10$C6UzMDM.H6dfI/f/IKcEeOgxNC1UZfw/vHK8u/T5DdKJx8YRc0O9K';
 
 // Issues an access token and sets a rotating refresh token cookie. Used by
 // every login path (OAuth callbacks and local admin login) so they all get
@@ -401,6 +420,15 @@ exports.adminLogin = async (req, res) => {
       });
     }
 
+    // Per-account lockout closes the gap the IP-based rate limiter on this
+    // route doesn't cover: distributed credential stuffing against one
+    // specific account from many IPs.
+    if (loginLockoutService.isLocked(username)) {
+      return res.status(429).json({
+        message: 'Too many failed attempts. Please try again later.',
+      });
+    }
+
     // Any staff role may sign in here, not just admins - a kitchen needs
     // its own credentials rather than borrowing the owner's. What each role
     // can then do is still decided downstream by requireAdmin /
@@ -418,6 +446,13 @@ exports.adminLogin = async (req, res) => {
     );
 
     if (rows.length === 0) {
+      // Still runs a bcrypt comparison against a dummy hash - an unknown
+      // username must take about as long as a known one with a wrong
+      // password, or the difference in response time itself reveals which
+      // usernames exist.
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+      loginLockoutService.recordFailure(username);
+
       return res.status(401).json({
         message: 'Invalid credentials',
       });
@@ -437,10 +472,14 @@ exports.adminLogin = async (req, res) => {
     );
 
     if (!passwordMatches) {
+      loginLockoutService.recordFailure(username);
+
       return res.status(401).json({
         message: 'Invalid credentials',
       });
     }
+
+    loginLockoutService.recordSuccess(username);
 
     const token = await issueSession(res, user, req);
 
@@ -561,7 +600,7 @@ exports.me = async (req, res) => {
 
     const token = authorization.substring('Bearer '.length);
 
-    const decoded = jwt.verify(token, env.JWT_SECRET);
+    const decoded = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] });
 
     const [rows] = await db.execute(
       `

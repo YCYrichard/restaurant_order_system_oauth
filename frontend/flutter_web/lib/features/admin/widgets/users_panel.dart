@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/auth/auth_controller.dart';
+import '../../../core/api/response_message.dart';
 
 /// Admin panel for managing which users have access to which stores
 /// (owner_store_access) - previously this could only be done by hand-editing
@@ -50,7 +51,7 @@ class _UsersPanelState extends State<UsersPanel> {
           await _auth.authorizedRequest('GET', '/api/v1/users?pageSize=50');
 
       if (response.statusCode != 200) {
-        _showMessage('Failed to load users: ${response.body}', isError: true);
+        _showMessage(responseErrorMessage(response, 'Failed to load users.'), isError: true);
         setState(() => _loading = false);
         return;
       }
@@ -70,7 +71,7 @@ class _UsersPanelState extends State<UsersPanel> {
       });
     } catch (error) {
       setState(() => _loading = false);
-      _showMessage('Network error while loading users: $error', isError: true);
+      _showMessage(networkErrorMessage(), isError: true);
     }
   }
 
@@ -419,7 +420,7 @@ class _StoreAccessDialogState extends State<_StoreAccessDialog> {
       });
     } catch (error) {
       setState(() {
-        _error = 'Network error: $error';
+        _error = networkErrorMessage();
         _loading = false;
       });
     }
@@ -455,7 +456,7 @@ class _StoreAccessDialogState extends State<_StoreAccessDialog> {
       setState(() => _saving = false);
     } catch (error) {
       setState(() {
-        _error = 'Network error: $error';
+        _error = networkErrorMessage();
         _saving = false;
       });
     }
@@ -482,7 +483,7 @@ class _StoreAccessDialogState extends State<_StoreAccessDialog> {
       setState(() => _saving = false);
     } catch (error) {
       setState(() {
-        _error = 'Network error: $error';
+        _error = networkErrorMessage();
         _saving = false;
       });
     }

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/auth/auth_controller.dart';
+import '../../../core/api/response_message.dart';
 
 /// Admin panel for promo codes. Discounts are always resolved server-side
 /// at checkout from the code alone, so nothing here affects what a customer
@@ -66,7 +67,7 @@ class _CouponsPanelState extends State<CouponsPanel> {
       );
 
       if (response.statusCode != 200) {
-        _showMessage('Failed to load coupons: ${response.body}',
+        _showMessage(responseErrorMessage(response, 'Failed to load coupons.'),
             isError: true);
         setState(() => _loading = false);
         return;
@@ -87,7 +88,7 @@ class _CouponsPanelState extends State<CouponsPanel> {
       });
     } catch (error) {
       setState(() => _loading = false);
-      _showMessage('Network error while loading coupons: $error',
+      _showMessage(networkErrorMessage(),
           isError: true);
     }
   }
@@ -107,7 +108,7 @@ class _CouponsPanelState extends State<CouponsPanel> {
 
       await _loadCoupons();
     } catch (error) {
-      _showMessage('Network error: $error', isError: true);
+      _showMessage(networkErrorMessage(), isError: true);
     }
   }
 
@@ -148,7 +149,7 @@ class _CouponsPanelState extends State<CouponsPanel> {
 
       await _loadCoupons();
     } catch (error) {
-      _showMessage('Network error: $error', isError: true);
+      _showMessage(networkErrorMessage(), isError: true);
     }
   }
 

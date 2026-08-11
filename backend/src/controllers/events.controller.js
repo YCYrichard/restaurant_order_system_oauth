@@ -49,12 +49,15 @@ exports.streamStoreEvents = async (req, res, next) => {
   try {
     const storeId = Number(req.params.storeId);
 
-    openStream(req, res);
-
+    // Subscribe (which can reject over the connection cap) before writing
+    // any response headers, so a rejected connection comes back as a clean
+    // JSON error through the normal error middleware, not a half-open SSE
+    // stream the client has to notice failed on its own.
     const unsubscribe = eventsService.subscribeToStore(storeId, (event) => {
       writeEvent(res, event);
     });
 
+    openStream(req, res);
     manageStream(req, res, unsubscribe);
   } catch (error) {
     next(error);
@@ -65,12 +68,11 @@ exports.streamMyOrderEvents = async (req, res, next) => {
   try {
     const userId = req.user.id;
 
-    openStream(req, res);
-
     const unsubscribe = eventsService.subscribeToUser(userId, (event) => {
       writeEvent(res, event);
     });
 
+    openStream(req, res);
     manageStream(req, res, unsubscribe);
   } catch (error) {
     next(error);

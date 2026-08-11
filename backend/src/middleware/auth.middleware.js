@@ -23,7 +23,11 @@ function requireAuth(req, res, next) {
       });
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET);
+    // Pinned explicitly rather than relying on the library default - closes
+    // off algorithm-confusion risk if this trust boundary ever also has to
+    // verify an asymmetrically-signed token (e.g. a provider id_token)
+    // reusing the same code path.
+    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
 
     req.user = decoded;
 

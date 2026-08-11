@@ -41,6 +41,17 @@ describe('oauth.service OAuth state / next-path handling', () => {
     expect(oauthService.verifyOAuthState(state, 'google').next).toBeNull();
   });
 
+  // A leading backslash passes a naive `startsWith('/') &&
+  // !startsWith('//')` check, but several browsers normalize a leading
+  // backslash to a forward slash before navigating - turning this into the
+  // same scheme-relative-redirect bypass as '//evil.com'.
+  test('drops a backslash-prefixed next path', () => {
+    const url = oauthService.buildGoogleAuthUrl('/\\evil.com/steal');
+    const state = new URL(url).searchParams.get('state');
+
+    expect(oauthService.verifyOAuthState(state, 'google').next).toBeNull();
+  });
+
   test('drops an absolute URL passed as next', () => {
     const url = oauthService.buildGoogleAuthUrl('https://evil.com/steal');
     const state = new URL(url).searchParams.get('state');

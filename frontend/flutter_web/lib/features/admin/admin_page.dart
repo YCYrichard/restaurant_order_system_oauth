@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
+import '../../core/api/response_message.dart';
 import '../../core/auth/auth_controller.dart';
 import '../../core/constants/app_config.dart';
 import 'widgets/coupons_panel.dart';
@@ -177,7 +178,7 @@ class _AdminPageState extends State<AdminPage> {
 
       if (response.statusCode != 200) {
         _showMessage(
-          'Failed to load stores: ${response.body}',
+          responseErrorMessage(response, 'Failed to load stores.'),
           isError: true,
         );
         return;
@@ -230,7 +231,7 @@ class _AdminPageState extends State<AdminPage> {
       });
 
       _showMessage(
-        'Network error while loading stores: $error',
+        networkErrorMessage(),
         isError: true,
       );
     }
@@ -267,7 +268,7 @@ class _AdminPageState extends State<AdminPage> {
 
       if (response.statusCode != 200) {
         _showMessage(
-          'Failed to load categories: ${response.body}',
+          responseErrorMessage(response, 'Failed to load categories.'),
           isError: true,
         );
         setState(() {
@@ -291,7 +292,7 @@ class _AdminPageState extends State<AdminPage> {
       });
 
       _showMessage(
-        'Network error while loading categories: $error',
+        networkErrorMessage(),
         isError: true,
       );
     }
@@ -340,7 +341,7 @@ class _AdminPageState extends State<AdminPage> {
 
       if (response.statusCode != 201) {
         _showMessage(
-          'Failed to create category: ${response.body}',
+          responseErrorMessage(response, 'Failed to create category.'),
           isError: true,
         );
         return;
@@ -350,7 +351,7 @@ class _AdminPageState extends State<AdminPage> {
       await _loadCategoriesForSelectedStore();
     } catch (error) {
       _showMessage(
-        'Network error while creating category: $error',
+        networkErrorMessage(),
         isError: true,
       );
     } finally {
@@ -396,7 +397,7 @@ class _AdminPageState extends State<AdminPage> {
 
       if (response.statusCode != 200) {
         _showMessage(
-          'Failed to update category: ${response.body}',
+          responseErrorMessage(response, 'Failed to update category.'),
           isError: true,
         );
         return;
@@ -406,7 +407,7 @@ class _AdminPageState extends State<AdminPage> {
       await _loadCategoriesForSelectedStore();
     } catch (error) {
       _showMessage(
-        'Network error while updating category: $error',
+        networkErrorMessage(),
         isError: true,
       );
     } finally {
@@ -443,7 +444,7 @@ class _AdminPageState extends State<AdminPage> {
       await _loadCategoriesForSelectedStore();
     } catch (error) {
       _showMessage(
-        'Network error while deleting category: $error',
+        networkErrorMessage(),
         isError: true,
       );
     }
@@ -484,7 +485,7 @@ class _AdminPageState extends State<AdminPage> {
 
       if (response.statusCode != 200) {
         _showMessage(
-          'Failed to load products: ${response.body}',
+          responseErrorMessage(response, 'Failed to load products.'),
           isError: true,
         );
         return;
@@ -505,7 +506,7 @@ class _AdminPageState extends State<AdminPage> {
       });
 
       _showMessage(
-        'Network error while loading products: $error',
+        networkErrorMessage(),
         isError: true,
       );
     }
@@ -546,7 +547,7 @@ class _AdminPageState extends State<AdminPage> {
 
       if (response.statusCode != 201) {
         _showMessage(
-          'Failed to create store: ${response.body}',
+          responseErrorMessage(response, 'Failed to create store.'),
           isError: true,
         );
         return;
@@ -556,7 +557,7 @@ class _AdminPageState extends State<AdminPage> {
       await _loadStores();
     } catch (error) {
       _showMessage(
-        'Network error while creating store: $error',
+        networkErrorMessage(),
         isError: true,
       );
     } finally {
@@ -604,7 +605,7 @@ class _AdminPageState extends State<AdminPage> {
 
       if (response.statusCode != 200) {
         _showMessage(
-          'Failed to update store: ${response.body}',
+          responseErrorMessage(response, 'Failed to update store.'),
           isError: true,
         );
         return;
@@ -614,7 +615,7 @@ class _AdminPageState extends State<AdminPage> {
       await _loadStores();
     } catch (error) {
       _showMessage(
-        'Network error while updating store: $error',
+        networkErrorMessage(),
         isError: true,
       );
     } finally {
@@ -646,7 +647,7 @@ class _AdminPageState extends State<AdminPage> {
 
       if (response.statusCode != 200) {
         _showMessage(
-          'Failed to update store status: ${response.body}',
+          responseErrorMessage(response, 'Failed to update store status.'),
           isError: true,
         );
         return;
@@ -661,7 +662,7 @@ class _AdminPageState extends State<AdminPage> {
       await _loadStores();
     } catch (error) {
       _showMessage(
-        'Network error while updating store status: $error',
+        networkErrorMessage(),
         isError: true,
       );
     }
@@ -706,7 +707,7 @@ class _AdminPageState extends State<AdminPage> {
 
       if (response.statusCode != 201) {
         _showMessage(
-          'Failed to create product: ${response.body}',
+          responseErrorMessage(response, 'Failed to create product.'),
           isError: true,
         );
         return;
@@ -716,7 +717,7 @@ class _AdminPageState extends State<AdminPage> {
       await _loadProductsForSelectedStore();
     } catch (error) {
       _showMessage(
-        'Network error while creating product: $error',
+        networkErrorMessage(),
         isError: true,
       );
     } finally {
@@ -758,7 +759,7 @@ class _AdminPageState extends State<AdminPage> {
 
       if (response.statusCode != 200) {
         _showMessage(
-          'Failed to update product: ${response.body}',
+          responseErrorMessage(response, 'Failed to update product.'),
           isError: true,
         );
         return;
@@ -768,7 +769,7 @@ class _AdminPageState extends State<AdminPage> {
       await _loadProductsForSelectedStore();
     } catch (error) {
       _showMessage(
-        'Network error while updating product: $error',
+        networkErrorMessage(),
         isError: true,
       );
     } finally {
@@ -800,7 +801,7 @@ class _AdminPageState extends State<AdminPage> {
 
       if (response.statusCode != 200) {
         _showMessage(
-          'Failed to update product status: ${response.body}',
+          responseErrorMessage(response, 'Failed to update product status.'),
           isError: true,
         );
         return;
@@ -815,7 +816,7 @@ class _AdminPageState extends State<AdminPage> {
       await _loadProductsForSelectedStore();
     } catch (error) {
       _showMessage(
-        'Network error while updating product status: $error',
+        networkErrorMessage(),
         isError: true,
       );
     }

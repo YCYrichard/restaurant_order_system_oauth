@@ -43,7 +43,12 @@ class _AuthCallbackPageState extends State<AuthCallbackPage> {
 
       if (widget.errorMessage == null) {
         final next = widget.next;
-        context.go(next != null && next.isNotEmpty ? next : '/');
+        // context.replace, not context.go: the URL we're leaving
+        // (#/auth-success?token=<JWT>&next=...) carries the raw access
+        // token. go() would push a new history entry on top of it, leaving
+        // that token-bearing URL sitting in browser back/forward history
+        // indefinitely; replace() overwrites it instead.
+        context.replace(next != null && next.isNotEmpty ? next : '/');
       }
     });
   }

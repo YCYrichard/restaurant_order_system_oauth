@@ -5,12 +5,18 @@ const {
   requireAuth,
   requireStoreAccess,
 } = require('../middleware/auth.middleware');
+const { paymentLimiter } = require('../middleware/rate-limiters');
 
 // An account is required to order - createOrder attributes the order to
 // the authenticated caller, and payOrder verifies the caller owns the order
 // it's paying for (both enforced in their respective services).
 router.post('/', requireAuth, controller.createOrder);
-router.post('/:orderId/payments', requireAuth, paymentsController.payOrder);
+router.post(
+  '/:orderId/payments',
+  requireAuth,
+  paymentLimiter,
+  paymentsController.payOrder
+);
 router.get('/user/:userId', requireAuth, controller.getUserOrders);
 
 // Store-scoped listing for admin/staff order management. storeId is in the

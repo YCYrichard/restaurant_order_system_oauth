@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../core/api/response_message.dart';
 import '../../../core/auth/auth_controller.dart';
 import '../../orders/widgets/receipt_dialog.dart';
 
@@ -74,7 +75,7 @@ class _OrdersPanelState extends State<OrdersPanel> {
           await _auth.authorizedRequest('GET', '/orders/store/$storeId');
 
       if (response.statusCode != 200) {
-        _showMessage('Failed to load orders: ${response.body}', isError: true);
+        _showMessage(responseErrorMessage(response, 'Failed to load orders.'), isError: true);
         setState(() => _loading = false);
         return;
       }
@@ -94,7 +95,7 @@ class _OrdersPanelState extends State<OrdersPanel> {
       });
     } catch (error) {
       setState(() => _loading = false);
-      _showMessage('Network error while loading orders: $error', isError: true);
+      _showMessage(networkErrorMessage(), isError: true);
     }
   }
 
@@ -118,7 +119,7 @@ class _OrdersPanelState extends State<OrdersPanel> {
 
       await _loadOrders();
     } catch (error) {
-      _showMessage('Network error: $error', isError: true);
+      _showMessage(networkErrorMessage(), isError: true);
     }
   }
 

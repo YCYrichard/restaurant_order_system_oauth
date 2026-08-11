@@ -6,6 +6,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:web/web.dart' as web;
 
 import '../../../core/auth/auth_controller.dart';
+import '../../../core/api/response_message.dart';
 
 /// Generates the storefront QR/link (the only way a customer reaches this
 /// store - there is no in-app picker) and a printable QR per table. Both
@@ -121,7 +122,7 @@ class _TableQrPanelState extends State<TableQrPanel> {
       if (!mounted) return;
       setState(() {
         _regenerating = false;
-        _message = 'Network error: $error';
+        _message = networkErrorMessage();
         _messageIsError = true;
       });
     }

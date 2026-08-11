@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../core/api/response_message.dart';
 import '../../../core/auth/auth_controller.dart';
 
 /// Opening hours and holiday closures for the selected store.
@@ -142,7 +143,7 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
       });
     } catch (error) {
       setState(() => _loading = false);
-      _showMessage('Network error loading hours: $error', isError: true);
+      _showMessage(networkErrorMessage(), isError: true);
     }
   }
 
@@ -185,7 +186,7 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
       await _load();
     } catch (error) {
       setState(() => _saving = false);
-      _showMessage('Network error saving hours: $error', isError: true);
+      _showMessage(networkErrorMessage(), isError: true);
     }
   }
 

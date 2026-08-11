@@ -19,6 +19,7 @@ const paymentsRoutes = require('./routes/payments.routes');
 const reportsRoutes = require('./routes/reports.routes');
 const requestId = require('./middleware/requestId.middleware');
 const { notFoundHandler, errorHandler } = require('./middleware/error.middleware');
+const { globalLimiter } = require('./middleware/rate-limiters');
 
 const app = express();
 
@@ -74,12 +75,20 @@ app.use(
 app.use(express.json());
 app.use(cookieParser());
 
+// Ahead of the global limiter deliberately - infra monitoring polling this
+// shouldn't ever compete with real traffic for the same rate-limit budget.
 app.get('/health', (_, res) => {
   res.json({
     ok: true,
     service: 'restaurant-order-system-api',
   });
 });
+
+// A floor, not the binding constraint anywhere a route already has its own
+// tighter limiter (auth's oauth/credential limiters, the payment limiter
+// below) - before this, everything outside /auth/* had no rate limiting at
+// all: order creation, coupon redemption, reports, refunds.
+app.use(globalLimiter);
 
 app.use('/auth', authRoutes);
 app.use('/orders', orderRoutes);

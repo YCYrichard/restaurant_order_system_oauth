@@ -3,6 +3,10 @@ const reportsRepository = require('../repositories/reports.repository');
 const storeHoursService = require('./store-hours.service');
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+// A generous ceiling, not a realistic report window - bounds the worst-case
+// unbounded, unpaginated scan (findCompletedOrdersForReport /
+// findItemRowsForReport) a repeated wide-range request could force.
+const MAX_RANGE_DAYS = 366;
 // 'delivery' isn't offered as a fulfillment choice any more (see
 // orders.service.js), so it's not a filterable/breakdown bucket here either
 // - a historical delivery order still counts toward summary totals, it just
@@ -62,6 +66,17 @@ function parseRange({ from, to }, timezone) {
 
   if (resolvedFrom > resolvedTo) {
     throw new ReportValidationError('from must not be after to');
+  }
+
+  const spanDays = Math.round(
+    (new Date(`${resolvedTo}T00:00:00Z`) - new Date(`${resolvedFrom}T00:00:00Z`)) /
+      86400000
+  );
+
+  if (spanDays > MAX_RANGE_DAYS) {
+    throw new ReportValidationError(
+      `Date range cannot exceed ${MAX_RANGE_DAYS} days`
+    );
   }
 
   return { from: resolvedFrom, to: resolvedTo };

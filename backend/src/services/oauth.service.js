@@ -16,7 +16,17 @@ const STATE_TTL_SECONDS = 300; // 5 minutes - long enough to complete provider l
 // same-origin relative path is accepted, so a tampered or malicious value
 // can't turn this into an open redirect.
 function isSafeNextPath(next) {
-  return typeof next === 'string' && next.startsWith('/') && !next.startsWith('//');
+  if (typeof next !== 'string' || next.length === 0 || !next.startsWith('/')) {
+    return false;
+  }
+
+  // Reject anything that can turn into a scheme-relative redirect to
+  // another origin once a browser normalizes it: "//evil.com" is the
+  // obvious case, but a leading backslash ("/\evil.com", "/\/evil.com")
+  // passes a startsWith('/') && !startsWith('//') check while several
+  // browsers still treat backslash as a path separator and coerce it to
+  // "//evil.com" before navigating.
+  return !/^\/[/\\]/.test(next);
 }
 
 function createOAuthState(provider, next) {
@@ -32,7 +42,7 @@ function verifyOAuthState(state, provider) {
     throw new Error('Missing OAuth state parameter');
   }
 
-  const decoded = jwt.verify(state, STATE_SECRET);
+  const decoded = jwt.verify(state, STATE_SECRET, { algorithms: ['HS256'] });
 
   if (decoded.provider !== provider) {
     throw new Error('OAuth state does not match provider');

@@ -34,6 +34,12 @@ describe('reports.service.getSalesReport', () => {
     ).rejects.toThrow('from must not be after to');
   });
 
+  test('rejects a date range wider than the sane ceiling', async () => {
+    await expect(
+      reportsService.getSalesReport(1, { from: '2020-01-01', to: '2026-08-07' })
+    ).rejects.toThrow(/cannot exceed/);
+  });
+
   test('rejects an unknown fulfillment type', async () => {
     reportsRepository.findCompletedOrdersForReport.mockResolvedValue([]);
 

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../../../core/auth/auth_controller.dart';
+import '../../../core/api/response_message.dart';
 
 /// Read-only sales and item reporting for the selected store.
 ///
@@ -104,7 +105,7 @@ class _ReportsPanelState extends State<ReportsPanel> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _error = 'Network error while loading the report: $error';
+        _error = networkErrorMessage();
         _loading = false;
       });
     }
