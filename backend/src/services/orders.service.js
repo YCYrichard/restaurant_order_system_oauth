@@ -312,6 +312,7 @@ async function createOrder(input) {
     redeemPoints,
     einvoiceBuyerTaxId,
     einvoiceDonate,
+    einvoiceCarrierNumber,
   } = input;
 
   // Enforced here rather than only in the UI - otherwise the rule is
@@ -443,6 +444,7 @@ async function createOrder(input) {
       storeEinvoiceEnabled: store.einvoice_enabled,
       buyerTaxId: einvoiceBuyerTaxId,
       donate: einvoiceDonate,
+      carrierNumber: einvoiceCarrierNumber,
     });
 
     orderId = await ordersRepository.insertOrder(
@@ -461,6 +463,7 @@ async function createOrder(input) {
         einvoiceStatus: einvoice.status,
         einvoiceBuyerTaxId: einvoice.buyerTaxId,
         einvoiceDonate: einvoice.donate,
+        einvoiceCarrierNumber: einvoice.carrierNumber,
         customerName,
         customerPhone,
         customerEmail,

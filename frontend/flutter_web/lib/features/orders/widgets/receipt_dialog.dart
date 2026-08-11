@@ -361,7 +361,9 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                     ? 'Invoice pending - donated to charity'
                     : order['einvoice_buyer_tax_id'] != null
                         ? 'Invoice pending - tax ID ${order['einvoice_buyer_tax_id']}'
-                        : 'Invoice pending',
+                        : order['einvoice_carrier_number'] != null
+                            ? 'Invoice pending - carrier ${order['einvoice_carrier_number']}'
+                            : 'Invoice pending',
               },
               style: TextStyle(
                 fontSize: 12,

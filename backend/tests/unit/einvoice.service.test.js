@@ -6,19 +6,31 @@ describe('einvoice.service.resolveBuyerInput', () => {
       storeEinvoiceEnabled: false,
       buyerTaxId: '12345678',
       donate: true,
+      carrierNumber: '/ABC1234',
     });
 
-    expect(result).toEqual({ status: 'not_applicable', buyerTaxId: null, donate: false });
+    expect(result).toEqual({
+      status: 'not_applicable',
+      buyerTaxId: null,
+      donate: false,
+      carrierNumber: null,
+    });
   });
 
-  test('defaults to a personal invoice when enabled and the buyer picks nothing', () => {
+  test('defaults to a personal invoice with no carrier when the buyer picks nothing', () => {
     const result = einvoiceService.resolveBuyerInput({
       storeEinvoiceEnabled: true,
       buyerTaxId: undefined,
       donate: undefined,
+      carrierNumber: undefined,
     });
 
-    expect(result).toEqual({ status: 'pending', buyerTaxId: null, donate: false });
+    expect(result).toEqual({
+      status: 'pending',
+      buyerTaxId: null,
+      donate: false,
+      carrierNumber: null,
+    });
   });
 
   test('accepts a valid 8-digit buyer tax ID', () => {
@@ -28,7 +40,12 @@ describe('einvoice.service.resolveBuyerInput', () => {
       donate: false,
     });
 
-    expect(result).toEqual({ status: 'pending', buyerTaxId: '12345678', donate: false });
+    expect(result).toEqual({
+      status: 'pending',
+      buyerTaxId: '12345678',
+      donate: false,
+      carrierNumber: null,
+    });
   });
 
   test('trims whitespace around a buyer tax ID', () => {
@@ -58,7 +75,7 @@ describe('einvoice.service.resolveBuyerInput', () => {
         buyerTaxId: '12345678',
         donate: true,
       })
-    ).toThrow(/not both/);
+    ).toThrow(/only one/);
   });
 
   test('accepts donate on its own', () => {
@@ -68,7 +85,58 @@ describe('einvoice.service.resolveBuyerInput', () => {
       donate: true,
     });
 
-    expect(result).toEqual({ status: 'pending', buyerTaxId: null, donate: true });
+    expect(result).toEqual({
+      status: 'pending',
+      buyerTaxId: null,
+      donate: true,
+      carrierNumber: null,
+    });
+  });
+
+  test('accepts a valid mobile barcode carrier number, uppercased', () => {
+    const result = einvoiceService.resolveBuyerInput({
+      storeEinvoiceEnabled: true,
+      carrierNumber: '/ab1234+',
+    });
+
+    expect(result).toEqual({
+      status: 'pending',
+      buyerTaxId: null,
+      donate: false,
+      carrierNumber: '/AB1234+',
+    });
+  });
+
+  test.each(['ab123456', '/AB123456', '/AB123', '/AB1234!'])(
+    'rejects a malformed carrier number: %p',
+    (carrierNumber) => {
+      expect(() =>
+        einvoiceService.resolveBuyerInput({
+          storeEinvoiceEnabled: true,
+          carrierNumber,
+        })
+      ).toThrow(einvoiceService.EinvoiceValidationError);
+    }
+  );
+
+  test('rejects a carrier number combined with a tax ID', () => {
+    expect(() =>
+      einvoiceService.resolveBuyerInput({
+        storeEinvoiceEnabled: true,
+        buyerTaxId: '12345678',
+        carrierNumber: '/AB1234+',
+      })
+    ).toThrow(/only one/);
+  });
+
+  test('rejects a carrier number combined with donate', () => {
+    expect(() =>
+      einvoiceService.resolveBuyerInput({
+        storeEinvoiceEnabled: true,
+        donate: true,
+        carrierNumber: '/AB1234+',
+      })
+    ).toThrow(/only one/);
   });
 });
 

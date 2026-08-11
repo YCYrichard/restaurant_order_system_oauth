@@ -2,6 +2,14 @@ const { isValidTaxId } = require('../utils/tax-id');
 
 const INVOICE_NUMBER_PATTERN = /^[A-Z]{2}\d{8}$/;
 
+// Mobile barcode carrier (手機條碼): a fixed 8 characters - a leading '/'
+// followed by 7 characters from [0-9A-Z+-.] - per the Ministry of Finance's
+// own e-invoice platform documentation. This only checks the shape; whether
+// the barcode is actually registered requires the government's own
+// verification API, which this system doesn't call (same reasoning as not
+// allocating real invoice numbers - see normalizeInvoiceNumber below).
+const CARRIER_NUMBER_PATTERN = /^\/[0-9A-Z+\-.]{7}$/;
+
 class EinvoiceValidationError extends Error {
   constructor(message) {
     super(message);
@@ -17,20 +25,26 @@ class EinvoiceValidationError extends Error {
 /// client sends. 'pending' means an invoice is owed and needs to be issued
 /// through the store's own real MOF-registered system - nothing here
 /// generates a real government invoice number.
-function resolveBuyerInput({ storeEinvoiceEnabled, buyerTaxId, donate }) {
+function resolveBuyerInput({ storeEinvoiceEnabled, buyerTaxId, donate, carrierNumber }) {
   if (!storeEinvoiceEnabled) {
-    return { status: 'not_applicable', buyerTaxId: null, donate: false };
+    return { status: 'not_applicable', buyerTaxId: null, donate: false, carrierNumber: null };
   }
 
   const trimmedTaxId = typeof buyerTaxId === 'string' ? buyerTaxId.trim() : '';
+  const trimmedCarrier =
+    typeof carrierNumber === 'string' ? carrierNumber.trim().toUpperCase() : '';
   const donateFlag = donate === true || donate === 'true';
 
-  // Mirrors the real checkout choice: a personal invoice by default, a
-  // company tax ID for a B2B deduction, or donating it away - never more
-  // than one of the two non-default paths at once.
-  if (trimmedTaxId && donateFlag) {
+  // Mirrors the real checkout choice: a personal invoice by default
+  // (optionally stored to the buyer's own carrier), a company tax ID for a
+  // B2B deduction, or donating it away - never more than one of these three
+  // paths at once. A company invoice isn't stored to a personal carrier, and
+  // a donated one isn't kept at all.
+  const chosenPaths = [trimmedTaxId, trimmedCarrier, donateFlag].filter(Boolean).length;
+
+  if (chosenPaths > 1) {
     throw new EinvoiceValidationError(
-      'Choose either a company tax ID or donating the invoice, not both'
+      'Choose only one of a company tax ID, a carrier number, or donating the invoice'
     );
   }
 
@@ -38,10 +52,17 @@ function resolveBuyerInput({ storeEinvoiceEnabled, buyerTaxId, donate }) {
     throw new EinvoiceValidationError('A buyer tax ID must be exactly 8 digits');
   }
 
+  if (trimmedCarrier && !CARRIER_NUMBER_PATTERN.test(trimmedCarrier)) {
+    throw new EinvoiceValidationError(
+      "A carrier number must be a mobile barcode: '/' followed by 7 letters, digits, or +-. characters"
+    );
+  }
+
   return {
     status: 'pending',
     buyerTaxId: trimmedTaxId || null,
     donate: donateFlag,
+    carrierNumber: trimmedCarrier || null,
   };
 }
 
@@ -64,6 +85,7 @@ function normalizeInvoiceNumber(value) {
 module.exports = {
   EinvoiceValidationError,
   INVOICE_NUMBER_PATTERN,
+  CARRIER_NUMBER_PATTERN,
   resolveBuyerInput,
   normalizeInvoiceNumber,
 };

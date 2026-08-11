@@ -10,9 +10,10 @@ async function insertOrder(order, connection = db) {
         points_redeemed, points_discount_amount,
         customer_name, customer_phone, customer_email, notes,
         fulfillment_type, delivery_address, table_number, desired_ready_at,
-        einvoice_status, einvoice_buyer_tax_id, einvoice_donate
+        einvoice_status, einvoice_buyer_tax_id, einvoice_donate,
+        einvoice_carrier_number
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       order.userId || null,
@@ -37,6 +38,7 @@ async function insertOrder(order, connection = db) {
       order.einvoiceStatus || 'not_applicable',
       order.einvoiceBuyerTaxId || null,
       order.einvoiceDonate ? 1 : 0,
+      order.einvoiceCarrierNumber || null,
     ]
   );
 

@@ -1017,7 +1017,7 @@ describe('orders.service.createOrder e-invoicing', () => {
         einvoiceBuyerTaxId: '12345678',
         einvoiceDonate: true,
       })
-    ).rejects.toThrow(/not both/);
+    ).rejects.toThrow(/only one/);
   });
 
   test('rejects a malformed buyer tax ID', async () => {
@@ -1026,6 +1026,43 @@ describe('orders.service.createOrder e-invoicing', () => {
     await expect(
       ordersService.createOrder({ ...validInput, einvoiceBuyerTaxId: '123' })
     ).rejects.toThrow(/8 digits/);
+  });
+
+  test('carries a valid carrier number through to the order, uppercased', async () => {
+    storesRepository.findStoreById.mockResolvedValue(einvoiceStore());
+
+    await ordersService.createOrder({
+      ...validInput,
+      einvoiceCarrierNumber: '/ab1234+',
+    });
+
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        einvoiceStatus: 'pending',
+        einvoiceCarrierNumber: '/AB1234+',
+      }),
+      mockConnection
+    );
+  });
+
+  test('rejects a malformed carrier number', async () => {
+    storesRepository.findStoreById.mockResolvedValue(einvoiceStore());
+
+    await expect(
+      ordersService.createOrder({ ...validInput, einvoiceCarrierNumber: '/AB123' })
+    ).rejects.toThrow(/mobile barcode/);
+  });
+
+  test('rejects a carrier number combined with a buyer tax ID', async () => {
+    storesRepository.findStoreById.mockResolvedValue(einvoiceStore());
+
+    await expect(
+      ordersService.createOrder({
+        ...validInput,
+        einvoiceCarrierNumber: '/AB1234+',
+        einvoiceBuyerTaxId: '12345678',
+      })
+    ).rejects.toThrow(/only one/);
   });
 });
 

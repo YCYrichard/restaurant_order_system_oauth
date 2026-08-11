@@ -48,6 +48,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   final _notesController = TextEditingController();
   final _couponController = TextEditingController();
   final _einvoiceTaxIdController = TextEditingController();
+  final _einvoiceCarrierController = TextEditingController();
 
   bool _isSubmitting = false;
   String? _orderId;
@@ -140,6 +141,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _notesController.dispose();
     _couponController.dispose();
     _einvoiceTaxIdController.dispose();
+    _einvoiceCarrierController.dispose();
     super.dispose();
   }
 
@@ -369,12 +371,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
       // resolves exactly how many points apply (cap-and-apply, up to the
       // order balance), so there's nothing here a client could inflate.
       'redeemPoints': _redeemPoints,
-      // Server ignores both unless the store has e-invoicing enabled - see
+      // Server ignores all three unless the store has e-invoicing enabled,
+      // and rejects more than one being set at once - see
       // einvoice.service.js#resolveBuyerInput.
       'einvoiceBuyerTaxId': _einvoiceTaxIdController.text.trim().isEmpty
           ? null
           : _einvoiceTaxIdController.text.trim(),
       'einvoiceDonate': _einvoiceDonate,
+      'einvoiceCarrierNumber': _einvoiceCarrierController.text.trim().isEmpty
+          ? null
+          : _einvoiceCarrierController.text.trim(),
     };
 
     try {
@@ -714,9 +720,20 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       ),
                       const SizedBox(height: 4),
                       const Text(
-                        "Leave blank for a personal invoice, or fill in your "
-                        "company's tax ID to claim it as a business expense.",
+                        'Pick at most one: save it to your own carrier, put '
+                        "your company's tax ID on it, or donate it. Leave "
+                        'everything blank for a personal invoice with no '
+                        'carrier.',
                         style: TextStyle(fontSize: 12, color: Color(0xFF77716D)),
+                      ),
+                      const SizedBox(height: 8),
+                      _ContactField(
+                        controller: _einvoiceCarrierController,
+                        label: 'Carrier number (手機條碼, e.g. /AB1234+)',
+                        icon: Icons.smartphone_outlined,
+                        textCapitalization: TextCapitalization.characters,
+                        enabled: _einvoiceTaxIdController.text.isEmpty && !_einvoiceDonate,
+                        onChanged: (_) => setState(() {}),
                       ),
                       const SizedBox(height: 8),
                       _ContactField(
@@ -724,16 +741,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
                         label: 'Company tax ID (統編, optional)',
                         icon: Icons.receipt_outlined,
                         keyboardType: TextInputType.number,
-                        enabled: !_einvoiceDonate,
+                        enabled: _einvoiceCarrierController.text.isEmpty && !_einvoiceDonate,
+                        onChanged: (_) => setState(() {}),
                       ),
                       CheckboxListTile(
                         contentPadding: EdgeInsets.zero,
                         controlAffinity: ListTileControlAffinity.leading,
                         value: _einvoiceDonate,
-                        onChanged: (value) => setState(() {
-                          _einvoiceDonate = value ?? false;
-                          if (_einvoiceDonate) _einvoiceTaxIdController.clear();
-                        }),
+                        onChanged: (_einvoiceTaxIdController.text.isNotEmpty ||
+                                _einvoiceCarrierController.text.isNotEmpty)
+                            ? null
+                            : (value) => setState(() => _einvoiceDonate = value ?? false),
                         title: const Text('Donate this invoice to charity'),
                       ),
                     ],
@@ -822,6 +840,8 @@ class _ContactField extends StatelessWidget {
   final int maxLines;
   final bool enabled;
   final String? Function(String?)? validator;
+  final void Function(String)? onChanged;
+  final TextCapitalization textCapitalization;
 
   const _ContactField({
     required this.controller,
@@ -831,6 +851,8 @@ class _ContactField extends StatelessWidget {
     this.maxLines = 1,
     this.enabled = true,
     this.validator,
+    this.onChanged,
+    this.textCapitalization = TextCapitalization.none,
   });
 
   @override
@@ -840,6 +862,8 @@ class _ContactField extends StatelessWidget {
       keyboardType: keyboardType,
       maxLines: maxLines,
       enabled: enabled,
+      onChanged: onChanged,
+      textCapitalization: textCapitalization,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon),
