@@ -1,16 +1,19 @@
 const db = require('../config/db');
 
-async function insertPayment({
-  orderId,
-  provider,
-  providerTransactionId,
-  amount,
-  currency,
-  status,
-  method,
-  rawResponse,
-}) {
-  const [result] = await db.execute(
+async function insertPayment(
+  {
+    orderId,
+    provider,
+    providerTransactionId,
+    amount,
+    currency,
+    status,
+    method,
+    rawResponse,
+  },
+  connection = db
+) {
+  const [result] = await connection.execute(
     `
       INSERT INTO payments (
         order_id, provider, provider_transaction_id,
@@ -67,8 +70,8 @@ async function findLatestPaidPayment(orderId) {
   return rows[0] || null;
 }
 
-async function sumPaidForOrder(orderId) {
-  const [rows] = await db.execute(
+async function sumPaidForOrder(orderId, connection = db) {
+  const [rows] = await connection.execute(
     `
       SELECT COALESCE(SUM(amount), 0) AS paid
       FROM payments
@@ -88,8 +91,8 @@ async function updatePaymentStatus(paymentId, status) {
   ]);
 }
 
-async function updateOrderPaymentStatus(orderId, paymentStatus) {
-  await db.execute('UPDATE orders SET payment_status = ? WHERE id = ?', [
+async function updateOrderPaymentStatus(orderId, paymentStatus, connection = db) {
+  await connection.execute('UPDATE orders SET payment_status = ? WHERE id = ?', [
     paymentStatus,
     orderId,
   ]);

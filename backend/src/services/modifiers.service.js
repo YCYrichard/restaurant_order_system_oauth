@@ -87,7 +87,9 @@ async function createGroup(storeId, input) {
 }
 
 /// Groups are addressed by id alone, so store access is resolved here -
-/// mirrors categories.service.js:resolveCategoryAccess.
+/// mirrors categories.service.js:resolveCategoryAccess. Returns the caller's
+/// access tier alongside the group so mutation-heavy callers can require
+/// owner-tier while reads stay open to any tier.
 async function resolveGroupAccess(groupId, user, hasStoreAccess) {
   const group = await modifiersRepository.findGroupById(groupId);
 
@@ -95,15 +97,35 @@ async function resolveGroupAccess(groupId, user, hasStoreAccess) {
     throw new ModifierNotFoundError();
   }
 
-  if (user.role !== 'admin') {
-    const allowed = await hasStoreAccess(user.id, group.store_id);
+  let accessRole = 'admin';
 
-    if (!allowed) {
+  if (user.role !== 'admin') {
+    accessRole = await hasStoreAccess(user.id, group.store_id);
+
+    if (!accessRole) {
       throw new ModifierAccessDeniedError();
     }
   }
 
-  return group;
+  return { group, accessRole };
+}
+
+// A modifier group can only be attached to/detached from a product in its
+// own store - without this, an owner/staff account for store A could attach
+// or detach a group on a product belonging to store B (a cross-store IDOR:
+// the earlier check only verifies access to the group's store, never that
+// productId is actually one of that store's products).
+async function assertProductInStore(productId, storeId) {
+  const belongs = await modifiersRepository.productBelongsToStore(
+    productId,
+    storeId
+  );
+
+  if (!belongs) {
+    throw new ModifierValidationError(
+      'That product does not belong to this store'
+    );
+  }
 }
 
 async function addOption(groupId, input) {
@@ -208,6 +230,7 @@ module.exports = {
   listGroupsForStore,
   createGroup,
   resolveGroupAccess,
+  assertProductInStore,
   addOption,
   deleteGroup,
   deleteOption,

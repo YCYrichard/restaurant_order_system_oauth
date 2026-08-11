@@ -28,10 +28,14 @@ async function findCategoryById(categoryId) {
   return rows[0] || null;
 }
 
+// Returns the caller's access_role for this store ('owner'/'manager'/
+// 'staff'), or null if they have no grant at all. A truthy return still
+// reads correctly wherever a caller only checks "has access" (any tier is
+// truthy) - callers that need to distinguish tiers use the value directly.
 async function hasStoreAccess(userId, storeId) {
   const [rows] = await db.execute(
     `
-      SELECT id
+      SELECT access_role
       FROM owner_store_access
       WHERE user_id = ?
         AND store_id = ?
@@ -40,7 +44,7 @@ async function hasStoreAccess(userId, storeId) {
     [userId, storeId]
   );
 
-  return rows.length > 0;
+  return rows[0]?.access_role ?? null;
 }
 
 async function insertCategory(storeId, { name, sortOrder }) {

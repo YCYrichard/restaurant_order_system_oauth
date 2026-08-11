@@ -1,10 +1,14 @@
 const db = require('../config/db');
 const modifiersRepository = require('../repositories/modifiers.repository');
+const { isOwnerTier } = require('../utils/access-tier');
 
 // Update/status are addressed by productId alone (no storeId in the URL),
 // so resolve the owning store here and verify access explicitly - the
 // requireStoreAccess middleware only works when storeId is already in
 // req.params. Mirrors categories.controller.js:resolveCategoryAccess.
+// Returns the caller's access tier alongside storeId so callers that need
+// owner-tier (price/status changes) can require it, while the "86" toggle
+// stays open to any tier.
 async function resolveProductAccess(productId, user) {
   const [rows] = await db.execute(
     `
@@ -23,12 +27,12 @@ async function resolveProductAccess(productId, user) {
   const storeId = rows[0].store_id;
 
   if (user.role === 'admin') {
-    return { storeId };
+    return { storeId, accessRole: 'admin' };
   }
 
   const [accessRows] = await db.execute(
     `
-      SELECT id
+      SELECT access_role
       FROM owner_store_access
       WHERE user_id = ?
         AND store_id = ?
@@ -43,7 +47,18 @@ async function resolveProductAccess(productId, user) {
     };
   }
 
-  return { storeId };
+  return { storeId, accessRole: accessRows[0].access_role };
+}
+
+function ownerTierErrorOrNull(access) {
+  if (!isOwnerTier(access.accessRole)) {
+    return {
+      status: 403,
+      message: 'This action requires owner or manager access to the store',
+    };
+  }
+
+  return null;
 }
 
 exports.listProductsByStore = async (req, res) => {
@@ -245,6 +260,11 @@ exports.updateProduct = async (req, res) => {
       });
     }
 
+    const tierError = ownerTierErrorOrNull(access);
+    if (tierError) {
+      return res.status(tierError.status).json({ message: tierError.message });
+    }
+
     const storeId = access.storeId;
 
     const name =
@@ -411,6 +431,11 @@ exports.updateProductStatus = async (req, res) => {
       return res.status(access.error.status).json({
         message: access.error.message,
       });
+    }
+
+    const tierError = ownerTierErrorOrNull(access);
+    if (tierError) {
+      return res.status(tierError.status).json({ message: tierError.message });
     }
 
     const isActive = Boolean(req.body.isActive);

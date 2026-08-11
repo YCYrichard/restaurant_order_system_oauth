@@ -6,6 +6,7 @@ const {
   requireAuth,
   requireAdmin,
   requireStoreAccess,
+  requireOwnerTier,
 } = require('../middleware/auth.middleware');
 
 router.get(
@@ -48,6 +49,7 @@ router.patch(
   '/:storeId/regenerate-code',
   requireAuth,
   requireStoreAccess,
+  requireOwnerTier,
   controller.regenerateStoreCode
 );
 
@@ -62,6 +64,7 @@ router.put(
   '/:storeId',
   requireAuth,
   requireStoreAccess,
+  requireOwnerTier,
   controller.updateStore
 );
 
@@ -69,6 +72,7 @@ router.patch(
   '/:storeId/status',
   requireAuth,
   requireStoreAccess,
+  requireOwnerTier,
   controller.updateStoreStatus
 );
 
@@ -83,6 +87,7 @@ router.put(
   '/:storeId/hours',
   requireAuth,
   requireStoreAccess,
+  requireOwnerTier,
   controller.replaceStoreHours
 );
 
@@ -90,6 +95,7 @@ router.post(
   '/:storeId/closures',
   requireAuth,
   requireStoreAccess,
+  requireOwnerTier,
   controller.addStoreClosure
 );
 
@@ -97,6 +103,7 @@ router.delete(
   '/:storeId/closures/:date',
   requireAuth,
   requireStoreAccess,
+  requireOwnerTier,
   controller.removeStoreClosure
 );
 

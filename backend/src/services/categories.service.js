@@ -1,4 +1,5 @@
 const categoriesRepository = require('../repositories/categories.repository');
+const { isOwnerTier } = require('../utils/access-tier');
 
 class CategoryValidationError extends Error {
   constructor(message) {
@@ -49,7 +50,8 @@ function normalizeInput({ name, sortOrder }) {
 // Update/delete are addressed by categoryId alone (no storeId in the
 // request), so this resolves the owning store and verifies access
 // explicitly - the requireStoreAccess middleware only works when storeId
-// is already in req.params.
+// is already in req.params. Returns the caller's access tier alongside the
+// category so mutation callers can require owner-tier.
 async function resolveCategoryAccess(categoryId, user) {
   const category = await categoriesRepository.findCategoryById(categoryId);
 
@@ -57,18 +59,20 @@ async function resolveCategoryAccess(categoryId, user) {
     throw new CategoryNotFoundError();
   }
 
+  let accessRole = 'admin';
+
   if (user.role !== 'admin') {
-    const hasAccess = await categoriesRepository.hasStoreAccess(
+    accessRole = await categoriesRepository.hasStoreAccess(
       user.id,
       category.store_id
     );
 
-    if (!hasAccess) {
+    if (!accessRole) {
       throw new CategoryAccessDeniedError();
     }
   }
 
-  return category;
+  return { category, accessRole };
 }
 
 async function listCategoriesByStore(storeId) {
@@ -86,7 +90,13 @@ async function createCategory(storeId, input) {
 }
 
 async function updateCategory(categoryId, user, input) {
-  await resolveCategoryAccess(categoryId, user);
+  const { accessRole } = await resolveCategoryAccess(categoryId, user);
+
+  if (!isOwnerTier(accessRole)) {
+    throw new CategoryAccessDeniedError(
+      'This action requires owner or manager access to the store'
+    );
+  }
 
   const normalized = normalizeInput(input);
   await categoriesRepository.updateCategory(categoryId, normalized);
@@ -95,7 +105,13 @@ async function updateCategory(categoryId, user, input) {
 }
 
 async function deleteCategory(categoryId, user) {
-  await resolveCategoryAccess(categoryId, user);
+  const { accessRole } = await resolveCategoryAccess(categoryId, user);
+
+  if (!isOwnerTier(accessRole)) {
+    throw new CategoryAccessDeniedError(
+      'This action requires owner or manager access to the store'
+    );
+  }
 
   const productCount =
     await categoriesRepository.countProductsInCategory(categoryId);

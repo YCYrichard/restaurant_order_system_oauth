@@ -5,6 +5,7 @@ const controller = require('../controllers/modifiers.controller');
 const {
   requireAuth,
   requireStoreAccess,
+  requireOwnerTier,
 } = require('../middleware/auth.middleware');
 
 // storeId is in the URL, so requireStoreAccess applies directly.
@@ -19,6 +20,7 @@ router.post(
   '/store/:storeId',
   requireAuth,
   requireStoreAccess,
+  requireOwnerTier,
   controller.createGroup
 );
 

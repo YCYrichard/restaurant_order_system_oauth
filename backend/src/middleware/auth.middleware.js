@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 
 const { JWT_SECRET } = require('../config/env');
+const { isOwnerTier } = require('../utils/access-tier');
 
 function getTokenFromRequest(req) {
   const authorization = req.headers.authorization || '';
@@ -61,6 +62,7 @@ async function requireStoreAccess(req, res, next) {
     }
 
     if (req.user.role === 'admin') {
+      req.storeAccessRole = 'admin';
       return next();
     }
 
@@ -78,7 +80,7 @@ async function requireStoreAccess(req, res, next) {
 
     const [rows] = await db.execute(
       `
-        SELECT id
+        SELECT access_role
         FROM owner_store_access
         WHERE user_id = ?
           AND store_id = ?
@@ -93,6 +95,7 @@ async function requireStoreAccess(req, res, next) {
       });
     }
 
+    req.storeAccessRole = rows[0].access_role;
     next();
   } catch (error) {
     console.error('Store access error:', error);
@@ -103,8 +106,22 @@ async function requireStoreAccess(req, res, next) {
   }
 }
 
+// Run after requireStoreAccess, which sets req.storeAccessRole. Gates
+// store-config/refund/deletion actions to owner-tier (owner/manager/admin) -
+// kitchen/order-status routes never use this and stay open to plain staff.
+function requireOwnerTier(req, res, next) {
+  if (!isOwnerTier(req.storeAccessRole)) {
+    return res.status(403).json({
+      message: 'This action requires owner or manager access to the store',
+    });
+  }
+
+  next();
+}
+
 module.exports = {
   requireAuth,
   requireAdmin,
   requireStoreAccess,
+  requireOwnerTier,
 };

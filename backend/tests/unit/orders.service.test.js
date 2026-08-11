@@ -144,6 +144,65 @@ describe('orders.service.createOrder', () => {
     );
   });
 
+  test('rejects a non-integer quantity', async () => {
+    await expect(
+      ordersService.createOrder({
+        ...validInput,
+        items: [{ productId: 1, quantity: 1.5, price: 15 }],
+        total: 15,
+      })
+    ).rejects.toThrow(/quantity between 1 and/);
+
+    expect(db.getConnection).not.toHaveBeenCalled();
+  });
+
+  test('rejects a quantity above the sane ceiling', async () => {
+    await expect(
+      ordersService.createOrder({
+        ...validInput,
+        items: [{ productId: 1, quantity: 101, price: 1010 }],
+        total: 1010,
+      })
+    ).rejects.toThrow(/quantity between 1 and/);
+
+    expect(db.getConnection).not.toHaveBeenCalled();
+  });
+
+  // The vulnerability this closes: a modifier option's price_delta can be
+  // negative (e.g. "smaller size"), and groups are shared across products -
+  // a delta calibrated for an expensive item would otherwise make a cheap
+  // item's line price negative, and an unbounded quantity would multiply
+  // that into a large negative subtotal.
+  test('floors a line price at zero when a modifier delta exceeds the product price', async () => {
+    mockCatalog();
+    modifiersRepository.groupRowsByProduct.mockReturnValue(
+      new Map([
+        [1, new Map([[1, {
+          id: 1, name: 'Size', min_select: 1, max_select: 1, is_required: true,
+          options: [{ id: 1, name: 'Small', price_delta: -50, is_active: true }],
+        }]])],
+      ])
+    );
+    ordersRepository.insertOrder.mockResolvedValue(42);
+    ordersRepository.insertOrderItems.mockResolvedValue([1001]);
+    ordersRepository.findOrderWithItems.mockResolvedValue({ id: 42 });
+
+    await ordersService.createOrder({
+      ...validInput,
+      items: [{ productId: 1, quantity: 1, modifierOptionIds: [1] }],
+      // A literal 0 trips validateCreateOrderInput's own `!total` check
+      // (an unrelated, pre-existing falsy-zero quirk) - close enough to
+      // stay within the staleness tolerance against the real total of 0.
+      total: 0.001,
+    });
+
+    expect(ordersRepository.insertOrderItems).toHaveBeenCalledWith(
+      42,
+      [expect.objectContaining({ price: 0 })],
+      mockConnection
+    );
+  });
+
   test('rejects a product that belongs to another store', async () => {
     // Scoped lookup returns nothing for a foreign product id.
     productsRepository.findProductsByIds.mockResolvedValue([]);
@@ -638,6 +697,29 @@ describe('orders.service.createOrder coupon handling', () => {
     expect(ordersRepository.insertOrder).not.toHaveBeenCalled();
   });
 
+  // The race this closes: countRedemptionsByUser is a plain SELECT COUNT
+  // with no locking read - two concurrent checkouts can both pass that
+  // check before either commits. The UNIQUE(coupon_id, user_id) constraint
+  // is the real backstop; this confirms the resulting duplicate-key error
+  // surfaces as a clean validation error, not a raw 500.
+  test('translates a duplicate-key race on redemption into a clean coupon error', async () => {
+    couponsService.resolveDiscount.mockResolvedValue({
+      coupon: { id: 7, code: 'SAVE10' },
+      discountAmount: 2,
+    });
+
+    const dupError = new Error("Duplicate entry '7-3' for key 'unique_coupon_redemption_per_user'");
+    dupError.code = 'ER_DUP_ENTRY';
+    couponsRepository.insertRedemption.mockRejectedValue(dupError);
+
+    await expect(
+      ordersService.createOrder({ ...validInput, userId: 3, couponCode: 'SAVE10' })
+    ).rejects.toThrow('You have already used that coupon');
+
+    expect(mockConnection.rollback).toHaveBeenCalled();
+    expect(mockConnection.commit).not.toHaveBeenCalled();
+  });
+
   test('rolls back when the coupon itself is rejected', async () => {
     couponsService.resolveDiscount.mockRejectedValue(
       new couponsService.CouponValidationError('That coupon has expired')
@@ -1002,6 +1084,8 @@ describe('orders.service.getReceipt', () => {
 });
 
 describe('orders.service.refundOrder', () => {
+  let mockConnection;
+
   beforeEach(() => jest.clearAllMocks());
 
   const order = {
@@ -1023,7 +1107,17 @@ describe('orders.service.refundOrder', () => {
     ordersRepository.sumRefundsForOrder.mockResolvedValue(0);
     ordersRepository.findRefundsForOrder.mockResolvedValue([]);
     ordersRepository.insertRefund.mockResolvedValue(1);
+    ordersRepository.lockOrderRow.mockResolvedValue({ id: 5, total: '20.00' });
     paymentsService.getPaymentsForOrder.mockResolvedValue([]);
+
+    mockConnection = {
+      beginTransaction: jest.fn().mockResolvedValue(undefined),
+      commit: jest.fn().mockResolvedValue(undefined),
+      rollback: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn(),
+    };
+
+    db.getConnection.mockResolvedValue(mockConnection);
   });
 
   test('sends the refund to the gateway before recording it', async () => {
@@ -1042,7 +1136,8 @@ describe('orders.service.refundOrder', () => {
         orderId: 5,
         amount: 5,
         providerTransactionId: 'TXN1',
-      })
+      }),
+      expect.anything()
     );
   });
 
@@ -1052,7 +1147,8 @@ describe('orders.service.refundOrder', () => {
     await ordersService.refundOrder(5, { id: 1, role: 'admin' }, { amount: 5 });
 
     expect(ordersRepository.insertRefund).toHaveBeenCalledWith(
-      expect.objectContaining({ providerTransactionId: null })
+      expect.objectContaining({ providerTransactionId: null }),
+      expect.anything()
     );
   });
 

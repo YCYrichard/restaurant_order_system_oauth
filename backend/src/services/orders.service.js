@@ -11,8 +11,13 @@ const couponsService = require('./coupons.service');
 const paymentsService = require('./payments.service');
 const eventsService = require('./events.service');
 const notificationsService = require('./notifications.service');
+const { isOwnerTier } = require('../utils/access-tier');
 
 const TOTAL_TOLERANCE = 0.01;
+// A generous ceiling, not a realistic order size - it exists only to bound
+// the multiplier a manipulated or mistaken quantity can apply to a line's
+// price (see resolvePricedItems' zero-floor on price).
+const MAX_ITEM_QUANTITY = 100;
 
 const ORDER_STATUSES = [
   'pending',
@@ -145,13 +150,16 @@ function validateCreateOrderInput(input) {
   }
 
   for (const item of items) {
+    const quantity = Number(item.quantity);
+
     if (
       !item.productId ||
-      !Number.isFinite(Number(item.quantity)) ||
-      Number(item.quantity) <= 0
+      !Number.isInteger(quantity) ||
+      quantity <= 0 ||
+      quantity > MAX_ITEM_QUANTITY
     ) {
       throw new OrderValidationError(
-        'Each item requires a valid productId and quantity'
+        `Each item requires a valid productId and a quantity between 1 and ${MAX_ITEM_QUANTITY}`
       );
     }
   }
@@ -214,7 +222,12 @@ async function resolvePricedItems(storeId, items) {
     return {
       productId: Number(product.id),
       quantity: Number(item.quantity),
-      price: roundMoney(Number(product.price) + priceDelta),
+      // Modifier options can carry a negative price delta (e.g. "smaller
+      // size"), and groups are shared across products - a delta calibrated
+      // for an expensive item would otherwise make a cheap item's line
+      // price negative. Floored at zero: worst case is a free line item,
+      // never a line that pays the customer.
+      price: Math.max(0, roundMoney(Number(product.price) + priceDelta)),
       notes: item.notes,
       modifiers,
     };
@@ -420,15 +433,28 @@ async function createOrder(input) {
     }
 
     if (appliedCoupon) {
-      await couponsRepository.insertRedemption(
-        {
-          couponId: appliedCoupon.id,
-          orderId,
-          userId,
-          discountAmount,
-        },
-        connection
-      );
+      try {
+        await couponsRepository.insertRedemption(
+          {
+            couponId: appliedCoupon.id,
+            orderId,
+            userId,
+            discountAmount,
+          },
+          connection
+        );
+      } catch (error) {
+        // The unique (coupon_id, user_id) constraint is the race-safe
+        // backstop behind the earlier countRedemptionsByUser check - a
+        // concurrent checkout that redeemed the same coupon between that
+        // check and here lands here as a duplicate-key error, not a bug.
+        if (error.code === 'ER_DUP_ENTRY') {
+          throw new couponsService.CouponValidationError(
+            'You have already used that coupon'
+          );
+        }
+        throw error;
+      }
     }
 
     await connection.commit();
@@ -464,7 +490,9 @@ async function getOrderById(orderId) {
 // Update/status-change and store-scoped listing are addressed by orderId or
 // storeId without necessarily being the caller's own order, so access is
 // resolved explicitly here - mirrors
-// categories.service.js:resolveCategoryAccess.
+// categories.service.js:resolveCategoryAccess. Returns the caller's access
+// tier alongside the order - kitchen/status actions stay open to any tier,
+// refunds require owner-tier (checked by callers that need it).
 async function resolveOrderAccess(orderId, user) {
   const order = await ordersRepository.findOrderById(orderId);
 
@@ -472,18 +500,20 @@ async function resolveOrderAccess(orderId, user) {
     throw new OrderNotFoundError();
   }
 
+  let accessRole = 'admin';
+
   if (user.role !== 'admin') {
-    const hasAccess = await ordersRepository.hasStoreAccess(
+    accessRole = await ordersRepository.hasStoreAccess(
       user.id,
       order.store_id
     );
 
-    if (!hasAccess) {
+    if (!accessRole) {
       throw new OrderAccessDeniedError();
     }
   }
 
-  return order;
+  return { order, accessRole };
 }
 
 async function updateOrderStatus(orderId, user, status) {
@@ -493,7 +523,7 @@ async function updateOrderStatus(orderId, user, status) {
     );
   }
 
-  const order = await resolveOrderAccess(orderId, user);
+  const { order } = await resolveOrderAccess(orderId, user);
 
   if (!isValidTransition(order.status, status)) {
     throw new OrderValidationError(
@@ -582,7 +612,13 @@ async function getReceipt(orderId, user) {
 /// transaction; those are still recorded, because the money moved at the
 /// counter and refusing to write it down would leave the books wrong.
 async function refundOrder(orderId, user, { amount, reason }) {
-  const order = await resolveOrderAccess(orderId, user);
+  const { order, accessRole } = await resolveOrderAccess(orderId, user);
+
+  if (!isOwnerTier(accessRole)) {
+    throw new OrderAccessDeniedError(
+      'Refunds require owner or manager access to this store'
+    );
+  }
 
   const parsedAmount = Number(amount);
 
@@ -590,30 +626,54 @@ async function refundOrder(orderId, user, { amount, reason }) {
     throw new OrderValidationError('A positive refund amount is required');
   }
 
-  const alreadyRefunded = await ordersRepository.sumRefundsForOrder(orderId);
-  const remaining = roundMoney(Number(order.total) - alreadyRefunded);
+  // The balance check and the write happen under one row lock so two
+  // concurrent refund requests on the same order can't both read the same
+  // pre-refund "remaining balance" and both succeed - without the lock,
+  // cumulative refunds could exceed the order total.
+  const connection = await db.getConnection();
 
-  if (parsedAmount > remaining + TOTAL_TOLERANCE) {
-    throw new OrderValidationError(
-      `Refund exceeds the remaining balance of ${remaining.toFixed(2)}`
+  try {
+    await connection.beginTransaction();
+    await ordersRepository.lockOrderRow(orderId, connection);
+
+    const alreadyRefunded = await ordersRepository.sumRefundsForOrder(
+      orderId,
+      connection
     );
+    const remaining = roundMoney(Number(order.total) - alreadyRefunded);
+
+    if (parsedAmount > remaining + TOTAL_TOLERANCE) {
+      throw new OrderValidationError(
+        `Refund exceeds the remaining balance of ${remaining.toFixed(2)}`
+      );
+    }
+
+    // Gateway first: if the refund is rejected there, recording it locally
+    // would tell the store money went back that never did. A null result
+    // means there was no gateway charge to reverse, which is not a failure.
+    const gatewayResult = await paymentsService.refundPayment(
+      orderId,
+      roundMoney(parsedAmount)
+    );
+
+    await ordersRepository.insertRefund(
+      {
+        orderId,
+        amount: roundMoney(parsedAmount),
+        reason,
+        createdBy: user?.id ?? null,
+        providerTransactionId: gatewayResult?.providerTransactionId ?? null,
+      },
+      connection
+    );
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
   }
-
-  // Gateway first: if the refund is rejected there, recording it locally
-  // would tell the store money went back that never did. A null result means
-  // there was no gateway charge to reverse, which is not a failure.
-  const gatewayResult = await paymentsService.refundPayment(
-    orderId,
-    roundMoney(parsedAmount)
-  );
-
-  await ordersRepository.insertRefund({
-    orderId,
-    amount: roundMoney(parsedAmount),
-    reason,
-    createdBy: user?.id ?? null,
-    providerTransactionId: gatewayResult?.providerTransactionId ?? null,
-  });
 
   return getReceipt(orderId, user);
 }

@@ -67,7 +67,7 @@ describe('products: cross-store authorization boundary', () => {
   test('an owner with access to the correct store can update its product', async () => {
     db.execute
       .mockResolvedValueOnce([[{ store_id: 5 }]]) // product belongs to store 5
-      .mockResolvedValueOnce([[{ id: 1 }]]) // grant found for store 5
+      .mockResolvedValueOnce([[{ access_role: 'owner' }]]) // owner-tier grant for store 5
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE
       .mockResolvedValueOnce([[{ id: 10, name: 'Updated' }]]); // SELECT after update
 
@@ -159,8 +159,8 @@ describe('orders: store-scoped listing authorization boundary', () => {
 
   test('a user with access to the store can list its orders', async () => {
     db.execute
-      .mockResolvedValueOnce([[{ id: 1 }]]) // requireStoreAccess: grant found
-      .mockResolvedValueOnce([[{ id: 1 }]]) // service-level hasStoreAccess re-check
+      .mockResolvedValueOnce([[{ access_role: 'staff' }]]) // requireStoreAccess: grant found
+      .mockResolvedValueOnce([[{ access_role: 'staff' }]]) // service-level hasStoreAccess re-check
       .mockResolvedValueOnce([[]]); // findOrdersByStore
 
     const res = await request(app)
@@ -192,5 +192,96 @@ describe('users resource: admin-only boundary', () => {
 
     expect(res.status).toBe(403);
     expect(db.execute).not.toHaveBeenCalled();
+  });
+});
+
+// owner_store_access.access_role has three tiers (owner/manager/staff), but
+// until this fix every check only asked "does a grant row exist at all" -
+// a plain staff grant (meant to be kitchen-board-only) could reach every
+// owner-level action on that store: refunds, price/status changes, store
+// config. These confirm the tier is now actually enforced, and that the
+// kitchen-facing actions staff genuinely need stay open to them.
+describe('access tier boundary: staff vs owner-tier actions', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('a staff-tier grant cannot update a product', async () => {
+    db.execute
+      .mockResolvedValueOnce([[{ store_id: 5 }]]) // product belongs to store 5
+      .mockResolvedValueOnce([[{ access_role: 'staff' }]]); // staff-tier grant only
+
+    const res = await request(app)
+      .put('/products/10')
+      .set('Authorization', `Bearer ${outsiderToken}`)
+      .send({ name: 'Hacked Name', price: 1 });
+
+    expect(res.status).toBe(403);
+  });
+
+  test('a staff-tier grant can still 86 a product - that stays a kitchen action', async () => {
+    db.execute
+      .mockResolvedValueOnce([[{ store_id: 5 }]]) // product belongs to store 5
+      .mockResolvedValueOnce([[{ access_role: 'staff' }]]) // staff-tier grant
+      .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE unavailable_until
+      .mockResolvedValueOnce([[{ id: 10, unavailable_until: null }]]); // SELECT after update
+
+    const res = await request(app)
+      .patch('/products/10/availability')
+      .set('Authorization', `Bearer ${outsiderToken}`)
+      .send({ available: true });
+
+    expect(res.status).toBe(200);
+  });
+
+  test('a staff-tier grant cannot issue a refund', async () => {
+    db.execute
+      .mockResolvedValueOnce([[{ id: 5, store_id: 5, total: '20.00' }]]) // findOrderById
+      .mockResolvedValueOnce([[{ access_role: 'staff' }]]); // staff-tier grant only
+
+    const res = await request(app)
+      .post('/orders/5/refunds')
+      .set('Authorization', `Bearer ${outsiderToken}`)
+      .send({ amount: 5, reason: 'test' });
+
+    expect(res.status).toBe(403);
+    // Rejected before ever locking the order row or calling the gateway.
+    expect(db.execute).toHaveBeenCalledTimes(2);
+  });
+
+  test('a staff-tier grant can still bump an order status - that stays a kitchen action', async () => {
+    db.execute
+      .mockResolvedValueOnce([[{ id: 5, store_id: 5, status: 'pending' }]]) // findOrderById
+      .mockResolvedValueOnce([[{ access_role: 'staff' }]]) // staff-tier grant
+      .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE status
+      .mockResolvedValueOnce([[{ id: 5, store_id: 5, status: 'confirmed' }]]) // findOrderWithItems: order row
+      .mockResolvedValueOnce([[]]); // findOrderWithItems: order_items join, none
+
+    const res = await request(app)
+      .patch('/orders/5/status')
+      .set('Authorization', `Bearer ${outsiderToken}`)
+      .send({ status: 'confirmed' });
+
+    expect(res.status).toBe(200);
+  });
+});
+
+// modifiers.controller.js attach/detach only checked the caller's access to
+// the GROUP's store, never that the target productId actually belongs to
+// that same store - an owner/staff account for store A could attach or
+// detach a modifier group on a product belonging to store B.
+describe('modifiers: cross-store IDOR boundary', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('cannot attach a modifier group to a product from a different store', async () => {
+    db.execute
+      .mockResolvedValueOnce([[{ id: 1, store_id: 5, name: 'Size' }]]) // findGroupById
+      .mockResolvedValueOnce([[{ access_role: 'owner' }]]) // owner-tier grant for store 5
+      .mockResolvedValueOnce([[]]); // productBelongsToStore(productId, 5) -> not found
+
+    const res = await request(app)
+      .post('/modifiers/1/products/999')
+      .set('Authorization', `Bearer ${outsiderToken}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/does not belong to this store/);
   });
 });

@@ -186,6 +186,21 @@ async function findOptionById(optionId) {
   return rows[0] || null;
 }
 
+async function productBelongsToStore(productId, storeId) {
+  const [rows] = await db.execute(
+    `
+      SELECT id
+      FROM products
+      WHERE id = ?
+        AND store_id = ?
+      LIMIT 1
+    `,
+    [productId, storeId]
+  );
+
+  return rows.length > 0;
+}
+
 async function attachGroupToProduct(productId, groupId) {
   await db.execute(
     `
@@ -266,6 +281,7 @@ module.exports = {
   insertOption,
   deleteOption,
   findOptionById,
+  productBelongsToStore,
   attachGroupToProduct,
   detachGroupFromProduct,
   insertOrderItemModifiers,

@@ -1,3 +1,7 @@
+jest.mock('../../src/config/db', () => ({
+  execute: jest.fn(),
+  getConnection: jest.fn(),
+}));
 jest.mock('../../src/repositories/payments.repository');
 jest.mock('../../src/repositories/orders.repository');
 jest.mock('../../src/services/payments/tappay.provider', () => {
@@ -12,6 +16,7 @@ jest.mock('../../src/services/payments/tappay.provider', () => {
   };
 });
 
+const db = require('../../src/config/db');
 const paymentsRepository = require('../../src/repositories/payments.repository');
 const ordersRepository = require('../../src/repositories/orders.repository');
 const tappay = require('../../src/services/payments/tappay.provider');
@@ -47,10 +52,20 @@ describe('payments service', () => {
     Object.keys(CREDENTIALS).forEach((key) => delete process.env[key]);
 
     ordersRepository.findOrderById.mockResolvedValue({ ...ORDER });
+    ordersRepository.lockOrderRow.mockResolvedValue({ id: 7, total: ORDER.total });
     paymentsRepository.sumPaidForOrder.mockResolvedValue(0);
     paymentsRepository.insertPayment.mockResolvedValue(1);
     paymentsRepository.updateOrderPaymentStatus.mockResolvedValue();
     paymentsRepository.updatePaymentStatus.mockResolvedValue();
+
+    const mockConnection = {
+      beginTransaction: jest.fn().mockResolvedValue(undefined),
+      commit: jest.fn().mockResolvedValue(undefined),
+      rollback: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn(),
+    };
+
+    db.getConnection.mockResolvedValue(mockConnection);
   });
 
   afterAll(() => {
@@ -133,11 +148,13 @@ describe('payments service', () => {
           providerTransactionId: 'TXN1',
           amount: 250,
           status: 'paid',
-        })
+        }),
+        expect.anything()
       );
       expect(paymentsRepository.updateOrderPaymentStatus).toHaveBeenCalledWith(
         7,
-        'paid'
+        'paid',
+        expect.anything()
       );
       expect(result.status).toBe('paid');
     });
@@ -161,7 +178,8 @@ describe('payments service', () => {
       });
 
       expect(paymentsRepository.insertPayment).toHaveBeenCalledWith(
-        expect.objectContaining({ amount: 9 })
+        expect.objectContaining({ amount: 9 }),
+        expect.anything()
       );
     });
 
@@ -194,7 +212,8 @@ describe('payments service', () => {
       expect(result).toMatchObject({ provider: 'manual', status: 'pending' });
       expect(paymentsRepository.updateOrderPaymentStatus).toHaveBeenCalledWith(
         7,
-        'unpaid'
+        'unpaid',
+        expect.anything()
       );
     });
 
@@ -203,9 +222,13 @@ describe('payments service', () => {
         ...ORDER,
         payment_status: 'paid',
       });
+      // payment_status is a denormalised cache; the outstanding-balance
+      // check (sourced from the payments table, the record of truth) is
+      // what actually blocks a second charge.
+      paymentsRepository.sumPaidForOrder.mockResolvedValue(250);
 
       await expect(paymentsService.payOrder(7, OWNER, {})).rejects.toThrow(
-        'already been paid'
+        'nothing left to pay'
       );
       expect(paymentsRepository.insertPayment).not.toHaveBeenCalled();
     });
@@ -228,6 +251,48 @@ describe('payments service', () => {
       await expect(
         paymentsService.payOrder(7, OWNER, { provider: 'bitcoin' })
       ).rejects.toThrow("Unknown payment provider 'bitcoin'");
+    });
+
+    // The race this closes: a double-click or client retry could previously
+    // send two payOrder calls that both read "nothing paid yet" before
+    // either committed, charging the card twice. The row lock serializes
+    // them - this confirms it's actually acquired, inside a transaction,
+    // before the gateway is ever called.
+    it('locks the order row before charging, inside a transaction', async () => {
+      process.env = { ...process.env, ...CREDENTIALS };
+      tappay.charge.mockResolvedValue({
+        status: 'paid',
+        providerTransactionId: 'TXN1',
+        amount: 250,
+        raw: { status: 0 },
+      });
+
+      const connection = await db.getConnection();
+      const lockCallOrder = [];
+      ordersRepository.lockOrderRow.mockImplementation(async () => {
+        lockCallOrder.push('lock');
+        return { id: 7, total: '250.00' };
+      });
+      tappay.charge.mockImplementation(async () => {
+        lockCallOrder.push('charge');
+        return {
+          status: 'paid',
+          providerTransactionId: 'TXN1',
+          amount: 250,
+          raw: { status: 0 },
+        };
+      });
+
+      await paymentsService.payOrder(7, OWNER, {
+        provider: 'tappay',
+        prime: 'prime_abc',
+      });
+
+      expect(connection.beginTransaction).toHaveBeenCalled();
+      expect(ordersRepository.lockOrderRow).toHaveBeenCalledWith(7, connection);
+      expect(lockCallOrder).toEqual(['lock', 'charge']);
+      expect(connection.commit).toHaveBeenCalled();
+      expect(connection.release).toHaveBeenCalled();
     });
 
     it("denies a different customer with no store access", async () => {

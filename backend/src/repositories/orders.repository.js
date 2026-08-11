@@ -132,10 +132,12 @@ async function findOrderById(orderId) {
   return rows[0] || null;
 }
 
+// Returns the caller's access_role for this store, or null with no grant -
+// same contract as categories.repository.js:hasStoreAccess.
 async function hasStoreAccess(userId, storeId) {
   const [rows] = await db.execute(
     `
-      SELECT id
+      SELECT access_role
       FROM owner_store_access
       WHERE user_id = ?
         AND store_id = ?
@@ -144,7 +146,7 @@ async function hasStoreAccess(userId, storeId) {
     [userId, storeId]
   );
 
-  return rows.length > 0;
+  return rows[0]?.access_role ?? null;
 }
 
 async function updateOrderStatus(orderId, status) {
@@ -224,8 +226,8 @@ async function findOrdersByUser(userId) {
   );
 }
 
-async function insertRefund(refund) {
-  const [result] = await db.execute(
+async function insertRefund(refund, connection = db) {
+  const [result] = await connection.execute(
     `
       INSERT INTO order_refunds (
         order_id, amount, reason, provider_transaction_id, created_by
@@ -258,8 +260,8 @@ async function findRefundsForOrder(orderId) {
   return rows;
 }
 
-async function sumRefundsForOrder(orderId) {
-  const [rows] = await db.execute(
+async function sumRefundsForOrder(orderId, connection = db) {
+  const [rows] = await connection.execute(
     `
       SELECT COALESCE(SUM(amount), 0) AS total
       FROM order_refunds
@@ -271,11 +273,31 @@ async function sumRefundsForOrder(orderId) {
   return Number(rows[0].total);
 }
 
+// Takes an exclusive row lock on the order within an open transaction, so
+// two concurrent refund requests on the same order serialize instead of
+// both reading the same pre-refund "remaining balance" and both succeeding
+// (which would let cumulative refunds exceed the order total). Must be
+// called with a transaction connection, never the bare pool.
+async function lockOrderRow(orderId, connection) {
+  const [rows] = await connection.execute(
+    `
+      SELECT id, total
+      FROM orders
+      WHERE id = ?
+      FOR UPDATE
+    `,
+    [orderId]
+  );
+
+  return rows[0] || null;
+}
+
 module.exports = {
   insertOrder,
   insertRefund,
   findRefundsForOrder,
   sumRefundsForOrder,
+  lockOrderRow,
   insertOrderItems,
   findOrderWithItems,
   findOrdersByUser,

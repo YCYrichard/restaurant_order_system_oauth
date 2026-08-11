@@ -5,6 +5,7 @@ const controller = require('../controllers/products.controller');
 const {
   requireAuth,
   requireStoreAccess,
+  requireOwnerTier,
 } = require('../middleware/auth.middleware');
 
 router.get(
@@ -18,6 +19,7 @@ router.post(
   '/store/:storeId',
   requireAuth,
   requireStoreAccess,
+  requireOwnerTier,
   controller.createProduct
 );
 

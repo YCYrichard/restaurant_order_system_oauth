@@ -1,3 +1,4 @@
+const db = require('../config/db');
 const paymentsConfig = require('../config/payments');
 const paymentsRepository = require('../repositories/payments.repository');
 const ordersRepository = require('../repositories/orders.repository');
@@ -98,6 +99,13 @@ async function assertOrderAccess(order, user) {
 
 /// Charges an order. The amount is read from the stored order, never from
 /// the request - the client supplies only a payment token.
+///
+/// The balance check, the gateway call, and the payment record all happen
+/// under one row lock on the order, so two concurrent charge attempts on
+/// the same order (a double-click, or a client retry after a slow SDK
+/// response) can't both read "nothing paid yet" before either commits and
+/// both charge the card. A failed/declined attempt is recorded afterward,
+/// outside the lock - no money moved, so there's nothing to race.
 async function payOrder(
   orderId,
   user,
@@ -111,23 +119,26 @@ async function payOrder(
 
   await assertOrderAccess(order, user);
 
-  if (order.payment_status === 'paid') {
-    throw new PaymentValidationError('This order has already been paid');
-  }
-
   const provider = resolveProvider(requestedProvider);
   const currency = paymentsConfig.tappayConfig().currency;
-  const alreadyPaid = await paymentsRepository.sumPaidForOrder(orderId);
-  const outstanding = roundMoney(Number(order.total) - alreadyPaid);
-
-  if (outstanding <= 0) {
-    throw new PaymentValidationError('This order has nothing left to pay');
-  }
-
-  let result;
+  const connection = await db.getConnection();
+  let outstanding = 0;
 
   try {
-    result = await provider.charge({
+    await connection.beginTransaction();
+    await ordersRepository.lockOrderRow(orderId, connection);
+
+    const alreadyPaid = await paymentsRepository.sumPaidForOrder(
+      orderId,
+      connection
+    );
+    outstanding = roundMoney(Number(order.total) - alreadyPaid);
+
+    if (outstanding <= 0) {
+      throw new PaymentValidationError('This order has nothing left to pay');
+    }
+
+    const result = await provider.charge({
       prime,
       amount: outstanding,
       currency,
@@ -138,55 +149,71 @@ async function payOrder(
         email: order.customer_email,
       },
     });
-  } catch (error) {
-    // A declined card is part of the order's history. Recording the failure
-    // is what makes "it says it charged me" answerable later.
-    await paymentsRepository.insertPayment({
-      orderId,
-      provider: provider.name,
-      providerTransactionId: null,
-      amount: outstanding,
-      currency,
-      status: 'failed',
-      method: null,
-      rawResponse: error.raw || { message: error.message },
-    });
 
-    await paymentsRepository.updateOrderPaymentStatus(orderId, 'failed');
+    // The provider's own figure wins when it reports one: for TWD it may
+    // have rounded to a whole dollar, and the record must show what was
+    // charged.
+    const chargedAmount = roundMoney(
+      result.amount !== undefined ? Number(result.amount) : outstanding
+    );
+
+    const paymentId = await paymentsRepository.insertPayment(
+      {
+        orderId,
+        provider: provider.name,
+        providerTransactionId: result.providerTransactionId,
+        amount: chargedAmount,
+        currency,
+        status: result.status,
+        method: result.method,
+        rawResponse: result.raw,
+      },
+      connection
+    );
+
+    await paymentsRepository.updateOrderPaymentStatus(
+      orderId,
+      result.status === 'paid' ? 'paid' : 'unpaid',
+      connection
+    );
+
+    await connection.commit();
+
+    return {
+      id: paymentId,
+      provider: provider.name,
+      status: result.status,
+      amount: chargedAmount,
+      currency,
+      method: result.method ?? null,
+    };
+  } catch (error) {
+    await connection.rollback();
+
+    // A declined card is part of the order's history. Recording the failure
+    // is what makes "it says it charged me" answerable later - done after
+    // releasing the lock, since a failed attempt moved no money and doesn't
+    // need the race protection above. Skipped for our own validation error
+    // (nothing was ever attempted with the gateway in that case).
+    if (outstanding > 0 && !(error instanceof PaymentValidationError)) {
+      await paymentsRepository.insertPayment({
+        orderId,
+        provider: provider.name,
+        providerTransactionId: null,
+        amount: outstanding,
+        currency,
+        status: 'failed',
+        method: null,
+        rawResponse: error.raw || { message: error.message },
+      });
+
+      await paymentsRepository.updateOrderPaymentStatus(orderId, 'failed');
+    }
 
     throw error;
+  } finally {
+    connection.release();
   }
-
-  // The provider's own figure wins when it reports one: for TWD it may have
-  // rounded to a whole dollar, and the record must show what was charged.
-  const chargedAmount = roundMoney(
-    result.amount !== undefined ? Number(result.amount) : outstanding
-  );
-
-  const paymentId = await paymentsRepository.insertPayment({
-    orderId,
-    provider: provider.name,
-    providerTransactionId: result.providerTransactionId,
-    amount: chargedAmount,
-    currency,
-    status: result.status,
-    method: result.method,
-    rawResponse: result.raw,
-  });
-
-  await paymentsRepository.updateOrderPaymentStatus(
-    orderId,
-    result.status === 'paid' ? 'paid' : 'unpaid'
-  );
-
-  return {
-    id: paymentId,
-    provider: provider.name,
-    status: result.status,
-    amount: chargedAmount,
-    currency,
-    method: result.method ?? null,
-  };
 }
 
 /// Sends a refund to the gateway that took the money, when there was one.
