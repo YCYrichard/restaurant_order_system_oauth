@@ -246,7 +246,8 @@ describe('POST /api/v1/users/:userId/store-access', () => {
       .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
       .mockResolvedValueOnce([
         [{ id: 5, store_id: 1, access_role: 'owner', store_name: 'Demo Store' }],
-      ]); // findStoreAccessForUser (grants) - already 'owner', no promotion needed
+      ]) // findStoreAccessForUser (grants) - already 'owner', no promotion needed
+      .mockResolvedValueOnce([{}]); // audit_log INSERT
 
     const res = await request(app)
       .post('/api/v1/users/2/store-access')
@@ -255,7 +256,7 @@ describe('POST /api/v1/users/:userId/store-access', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.storeAccess).toHaveLength(1);
-    expect(db.execute).toHaveBeenCalledTimes(4);
+    expect(db.execute).toHaveBeenCalledTimes(5);
   });
 
   test('promotes a customer to owner when granted owner access', async () => {
@@ -266,7 +267,8 @@ describe('POST /api/v1/users/:userId/store-access', () => {
       .mockResolvedValueOnce([
         [{ id: 5, store_id: 1, access_role: 'owner', store_name: 'Demo Store' }],
       ]) // findStoreAccessForUser (grants)
-      .mockResolvedValueOnce([{}]); // UPDATE users SET role
+      .mockResolvedValueOnce([{}]) // UPDATE users SET role
+      .mockResolvedValueOnce([{}]); // audit_log INSERT
 
     const res = await request(app)
       .post('/api/v1/users/2/store-access')
@@ -274,7 +276,7 @@ describe('POST /api/v1/users/:userId/store-access', () => {
       .send({ storeId: 1, accessRole: 'owner' });
 
     expect(res.status).toBe(201);
-    expect(db.execute).toHaveBeenCalledTimes(5);
+    expect(db.execute).toHaveBeenCalledTimes(6);
     expect(db.execute.mock.calls[4][0]).toMatch(/UPDATE users/);
     expect(db.execute.mock.calls[4][1]).toEqual(['owner', 2]);
   });
@@ -333,7 +335,8 @@ describe('POST /api/v1/users/:userId/store-access', () => {
           { id: 6, store_id: 3, access_role: 'owner', store_name: 'Demo2' },
         ],
       ]) // findStoreAccessForUser (grants) - now spans two stores
-      .mockResolvedValueOnce([{}]); // UPDATE users SET role
+      .mockResolvedValueOnce([{}]) // UPDATE users SET role
+      .mockResolvedValueOnce([{}]); // audit_log INSERT
 
     const res = await request(app)
       .post('/api/v1/users/2/store-access')
@@ -341,7 +344,7 @@ describe('POST /api/v1/users/:userId/store-access', () => {
       .send({ storeId: 3, accessRole: 'owner' });
 
     expect(res.status).toBe(201);
-    expect(db.execute).toHaveBeenCalledTimes(5);
+    expect(db.execute).toHaveBeenCalledTimes(6);
     expect(db.execute.mock.calls[4][0]).toMatch(/UPDATE users/);
     expect(db.execute.mock.calls[4][1]).toEqual(['owner', 2]);
   });
@@ -353,7 +356,8 @@ describe('POST /api/v1/users/:userId/store-access', () => {
       .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
       .mockResolvedValueOnce([
         [{ id: 5, store_id: 1, access_role: 'owner', store_name: 'Demo Store' }],
-      ]); // findStoreAccessForUser (grants)
+      ]) // findStoreAccessForUser (grants)
+      .mockResolvedValueOnce([{}]); // audit_log INSERT
 
     const res = await request(app)
       .post('/api/v1/users/2/store-access')
@@ -361,7 +365,7 @@ describe('POST /api/v1/users/:userId/store-access', () => {
       .send({ storeId: 1, accessRole: 'owner' });
 
     expect(res.status).toBe(201);
-    expect(db.execute).toHaveBeenCalledTimes(4);
+    expect(db.execute).toHaveBeenCalledTimes(5);
   });
 
   test('does not touch role for an existing admin', async () => {
@@ -371,7 +375,8 @@ describe('POST /api/v1/users/:userId/store-access', () => {
       .mockResolvedValueOnce([{}]) // INSERT ... ON DUPLICATE KEY UPDATE
       .mockResolvedValueOnce([
         [{ id: 5, store_id: 1, access_role: 'staff', store_name: 'Demo Store' }],
-      ]); // findStoreAccessForUser (grants)
+      ]) // findStoreAccessForUser (grants)
+      .mockResolvedValueOnce([{}]); // audit_log INSERT
 
     const res = await request(app)
       .post('/api/v1/users/2/store-access')
@@ -379,7 +384,7 @@ describe('POST /api/v1/users/:userId/store-access', () => {
       .send({ storeId: 1, accessRole: 'staff' });
 
     expect(res.status).toBe(201);
-    expect(db.execute).toHaveBeenCalledTimes(4);
+    expect(db.execute).toHaveBeenCalledTimes(5);
   });
 });
 

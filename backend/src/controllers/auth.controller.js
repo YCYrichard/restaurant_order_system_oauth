@@ -5,6 +5,7 @@ const db = require('../config/db');
 const env = require('../config/env');
 const tokenService = require('../services/token.service');
 const loginLockoutService = require('../services/login-lockout.service');
+const auditLogService = require('../services/audit-log.service');
 
 const {
   buildGoogleAuthUrl,
@@ -453,6 +454,15 @@ exports.adminLogin = async (req, res) => {
       await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
       loginLockoutService.recordFailure(username);
 
+      auditLogService.record({
+        actorUserId: null,
+        actorRole: 'unknown',
+        action: 'auth.admin_login_failed',
+        resourceType: 'user',
+        details: { username, reason: 'no such account' },
+        ipAddress: req.ip,
+      });
+
       return res.status(401).json({
         message: 'Invalid credentials',
       });
@@ -474,12 +484,31 @@ exports.adminLogin = async (req, res) => {
     if (!passwordMatches) {
       loginLockoutService.recordFailure(username);
 
+      auditLogService.record({
+        actorUserId: user.id,
+        actorRole: user.role,
+        action: 'auth.admin_login_failed',
+        resourceType: 'user',
+        resourceId: user.id,
+        details: { username, reason: 'wrong password' },
+        ipAddress: req.ip,
+      });
+
       return res.status(401).json({
         message: 'Invalid credentials',
       });
     }
 
     loginLockoutService.recordSuccess(username);
+
+    auditLogService.record({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: 'auth.admin_login_succeeded',
+      resourceType: 'user',
+      resourceId: user.id,
+      ipAddress: req.ip,
+    });
 
     const token = await issueSession(res, user, req);
 

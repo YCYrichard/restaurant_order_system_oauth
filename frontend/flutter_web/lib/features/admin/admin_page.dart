@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../../core/api/response_message.dart';
 import '../../core/auth/auth_controller.dart';
 import '../../core/constants/app_config.dart';
+import 'widgets/audit_log_panel.dart';
 import 'widgets/coupons_panel.dart';
 import 'widgets/modifiers_panel.dart';
 import 'widgets/orders_panel.dart';
@@ -1452,6 +1453,13 @@ class _AdminPageState extends State<AdminPage> {
           title: 'Users',
           icon: Icons.people_outline,
           content: UsersPanel(stores: stores),
+        ),
+      // Platform-wide visibility, same admin-only reasoning as Users above.
+      if (isAdmin)
+        _AdminTab(
+          title: 'Audit Log',
+          icon: Icons.history,
+          content: AuditLogPanel(stores: stores),
         ),
     ];
   }

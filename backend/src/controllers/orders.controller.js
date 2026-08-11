@@ -1,4 +1,5 @@
 const ordersService = require('../services/orders.service');
+const auditLogService = require('../services/audit-log.service');
 
 exports.createOrder = async (req, res, next) => {
   try {
@@ -101,6 +102,17 @@ exports.refundOrder = async (req, res, next) => {
   try {
     const orderId = Number(req.params.orderId);
     const receipt = await ordersService.refundOrder(orderId, req.user, req.body);
+
+    auditLogService.record({
+      actorUserId: req.user.id,
+      actorRole: req.user.role,
+      action: 'order.refunded',
+      resourceType: 'order',
+      resourceId: orderId,
+      storeId: receipt.order.store_id,
+      details: { amount: req.body.amount, reason: req.body.reason },
+      ipAddress: req.ip,
+    });
 
     res.status(201).json(receipt);
   } catch (error) {

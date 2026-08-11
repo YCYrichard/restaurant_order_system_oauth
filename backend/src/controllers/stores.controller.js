@@ -1,4 +1,5 @@
 const storesService = require('../services/stores.service');
+const auditLogService = require('../services/audit-log.service');
 
 exports.createStore = async (req, res, next) => {
   try {
@@ -85,6 +86,17 @@ exports.updateStore = async (req, res, next) => {
   try {
     const storeId = Number(req.params.storeId);
     const store = await storesService.updateStore(storeId, req.body);
+
+    auditLogService.record({
+      actorUserId: req.user.id,
+      actorRole: req.user.role,
+      action: 'store.updated',
+      resourceType: 'store',
+      resourceId: storeId,
+      storeId,
+      details: req.body,
+      ipAddress: req.ip,
+    });
 
     res.status(200).json({ store });
   } catch (error) {

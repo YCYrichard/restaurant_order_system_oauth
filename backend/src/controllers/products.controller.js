@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const modifiersRepository = require('../repositories/modifiers.repository');
 const { isOwnerTier } = require('../utils/access-tier');
+const auditLogService = require('../services/audit-log.service');
 
 // Update/status are addressed by productId alone (no storeId in the URL),
 // so resolve the owning store here and verify access explicitly - the
@@ -349,6 +350,17 @@ exports.updateProduct = async (req, res) => {
       [productId]
     );
 
+    auditLogService.record({
+      actorUserId: req.user.id,
+      actorRole: req.user.role,
+      action: 'product.updated',
+      resourceType: 'product',
+      resourceId: productId,
+      storeId,
+      details: { name, price, categoryId },
+      ipAddress: req.ip,
+    });
+
     return res.status(200).json({
       product: rows[0],
     });
@@ -464,6 +476,17 @@ exports.updateProductStatus = async (req, res) => {
       `,
       [productId]
     );
+
+    auditLogService.record({
+      actorUserId: req.user.id,
+      actorRole: req.user.role,
+      action: 'product.status_changed',
+      resourceType: 'product',
+      resourceId: productId,
+      storeId: access.storeId,
+      details: { isActive },
+      ipAddress: req.ip,
+    });
 
     return res.status(200).json({
       product: rows[0],
