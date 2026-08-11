@@ -1,5 +1,6 @@
 const storesRepository = require('../repositories/stores.repository');
 const storeHoursService = require('./store-hours.service');
+const { isValidTaxId } = require('../utils/tax-id');
 
 class StoreValidationError extends Error {
   constructor(message) {
@@ -28,6 +29,8 @@ function normalizeInput({
   loyaltyPointsPerDollar,
   loyaltyPointValue,
   loyaltyStackableWithCoupons,
+  einvoiceEnabled,
+  einvoiceTaxId,
 }) {
   const trimmedName = typeof name === 'string' ? name.trim() : '';
 
@@ -105,6 +108,23 @@ function normalizeInput({
   if (loyaltyStackableWithCoupons !== undefined) {
     normalized.loyaltyStackableWithCoupons =
       loyaltyStackableWithCoupons === true || loyaltyStackableWithCoupons === 'true';
+  }
+
+  // E-invoicing, also optional on update. Businesses averaging under
+  // NT$200,000 a month are legally exempt from issuing Uniform Invoices at
+  // all, so this defaults off rather than being assumed-on like tax.
+  if (einvoiceEnabled !== undefined) {
+    normalized.einvoiceEnabled = einvoiceEnabled === true || einvoiceEnabled === 'true';
+  }
+
+  if (einvoiceTaxId !== undefined) {
+    const trimmed = typeof einvoiceTaxId === 'string' ? einvoiceTaxId.trim() : '';
+
+    if (trimmed && !isValidTaxId(trimmed)) {
+      throw new StoreValidationError('einvoiceTaxId must be exactly 8 digits');
+    }
+
+    normalized.einvoiceTaxId = trimmed || null;
   }
 
   return normalized;

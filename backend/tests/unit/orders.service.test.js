@@ -933,6 +933,193 @@ describe('orders.service.createOrder loyalty redemption', () => {
   });
 });
 
+describe('orders.service.createOrder e-invoicing', () => {
+  let mockConnection;
+
+  function einvoiceStore(overrides = {}) {
+    return {
+      id: 1,
+      name: 'Test Store',
+      timezone: 'Asia/Taipei',
+      einvoice_enabled: true,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockCatalog();
+    storeHoursService.getStoreOpenState.mockResolvedValue({ isOpen: true, reason: null });
+
+    mockConnection = {
+      beginTransaction: jest.fn().mockResolvedValue(undefined),
+      commit: jest.fn().mockResolvedValue(undefined),
+      rollback: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn(),
+    };
+
+    db.getConnection.mockResolvedValue(mockConnection);
+    ordersRepository.insertOrder.mockResolvedValue(42);
+    ordersRepository.insertOrderItems.mockResolvedValue([1001]);
+    ordersRepository.findOrderWithItems.mockResolvedValue({ id: 42 });
+  });
+
+  test('defaults to not_applicable when the store has not enabled e-invoicing', async () => {
+    storesRepository.findStoreById.mockResolvedValue(einvoiceStore({ einvoice_enabled: false }));
+
+    await ordersService.createOrder({ ...validInput, einvoiceBuyerTaxId: '12345678' });
+
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        einvoiceStatus: 'not_applicable',
+        einvoiceBuyerTaxId: null,
+        einvoiceDonate: false,
+      }),
+      mockConnection
+    );
+  });
+
+  test('marks the order pending with no buyer choice made', async () => {
+    storesRepository.findStoreById.mockResolvedValue(einvoiceStore());
+
+    await ordersService.createOrder({ ...validInput });
+
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        einvoiceStatus: 'pending',
+        einvoiceBuyerTaxId: null,
+        einvoiceDonate: false,
+      }),
+      mockConnection
+    );
+  });
+
+  test('carries a valid buyer tax ID through to the order', async () => {
+    storesRepository.findStoreById.mockResolvedValue(einvoiceStore());
+
+    await ordersService.createOrder({ ...validInput, einvoiceBuyerTaxId: '12345678' });
+
+    expect(ordersRepository.insertOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        einvoiceStatus: 'pending',
+        einvoiceBuyerTaxId: '12345678',
+      }),
+      mockConnection
+    );
+  });
+
+  test('rejects a buyer tax ID and donate set together, before opening a connection', async () => {
+    storesRepository.findStoreById.mockResolvedValue(einvoiceStore());
+
+    await expect(
+      ordersService.createOrder({
+        ...validInput,
+        einvoiceBuyerTaxId: '12345678',
+        einvoiceDonate: true,
+      })
+    ).rejects.toThrow(/not both/);
+  });
+
+  test('rejects a malformed buyer tax ID', async () => {
+    storesRepository.findStoreById.mockResolvedValue(einvoiceStore());
+
+    await expect(
+      ordersService.createOrder({ ...validInput, einvoiceBuyerTaxId: '123' })
+    ).rejects.toThrow(/8 digits/);
+  });
+});
+
+describe('orders.service.issueEinvoice / voidEinvoice', () => {
+  const pendingOrder = {
+    id: 5,
+    store_id: 10,
+    user_id: 2,
+    status: 'completed',
+    total: '20.00',
+    subtotal: '20.00',
+    discount_amount: '0.00',
+    tax_amount: '1.00',
+    tax_rate: '0.05',
+    tax_inclusive: 1,
+    einvoice_status: 'pending',
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    ordersRepository.findOrderById.mockResolvedValue(pendingOrder);
+    ordersRepository.findOrderWithItems.mockResolvedValue(pendingOrder);
+    ordersRepository.findRefundsForOrder.mockResolvedValue([]);
+    ordersRepository.setEinvoiceIssued.mockResolvedValue(true);
+    ordersRepository.setEinvoiceVoid.mockResolvedValue(true);
+    paymentsService.getPaymentsForOrder.mockResolvedValue([]);
+  });
+
+  test('records a valid invoice number obtained through the store\'s own system', async () => {
+    await ordersService.issueEinvoice(5, { id: 1, role: 'admin' }, {
+      einvoiceNumber: 'ab12345678',
+    });
+
+    expect(ordersRepository.setEinvoiceIssued).toHaveBeenCalledWith(5, 'AB12345678');
+  });
+
+  test('rejects a malformed invoice number', async () => {
+    await expect(
+      ordersService.issueEinvoice(5, { id: 1, role: 'admin' }, { einvoiceNumber: '12345' })
+    ).rejects.toThrow(/two letters/);
+
+    expect(ordersRepository.setEinvoiceIssued).not.toHaveBeenCalled();
+  });
+
+  test('refuses to issue against an order that is not pending', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      ...pendingOrder,
+      einvoice_status: 'not_applicable',
+    });
+
+    await expect(
+      ordersService.issueEinvoice(5, { id: 1, role: 'admin' }, { einvoiceNumber: 'AB12345678' })
+    ).rejects.toThrow(/Cannot issue/);
+  });
+
+  test('requires owner-tier access to issue', async () => {
+    ordersRepository.hasStoreAccess.mockResolvedValue('staff');
+
+    await expect(
+      ordersService.issueEinvoice(5, { id: 9, role: 'owner' }, { einvoiceNumber: 'AB12345678' })
+    ).rejects.toThrow(ordersService.OrderAccessDeniedError);
+
+    expect(ordersRepository.setEinvoiceIssued).not.toHaveBeenCalled();
+  });
+
+  test('voids a pending invoice', async () => {
+    await ordersService.voidEinvoice(5, { id: 1, role: 'admin' });
+
+    expect(ordersRepository.setEinvoiceVoid).toHaveBeenCalledWith(5);
+  });
+
+  test('voids an already-issued invoice too', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      ...pendingOrder,
+      einvoice_status: 'issued',
+    });
+
+    await ordersService.voidEinvoice(5, { id: 1, role: 'admin' });
+
+    expect(ordersRepository.setEinvoiceVoid).toHaveBeenCalledWith(5);
+  });
+
+  test('refuses to void an invoice that does not apply to this order', async () => {
+    ordersRepository.findOrderById.mockResolvedValue({
+      ...pendingOrder,
+      einvoice_status: 'not_applicable',
+    });
+
+    await expect(
+      ordersService.voidEinvoice(5, { id: 1, role: 'admin' })
+    ).rejects.toThrow(/Cannot void/);
+  });
+});
+
 describe('orders.service.updateOrderStatus', () => {
   const adminUser = { id: 1, role: 'admin' };
   const ownerUser = { id: 2, role: 'customer' };

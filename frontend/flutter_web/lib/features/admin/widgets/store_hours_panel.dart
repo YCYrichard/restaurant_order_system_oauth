@@ -40,6 +40,9 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
 
   final _minPrepController = TextEditingController(text: '15');
 
+  bool _einvoiceEnabled = false;
+  final _einvoiceTaxIdController = TextEditingController();
+
   bool _loading = false;
   bool _saving = false;
   String? _message;
@@ -56,6 +59,7 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
   void dispose() {
     _taxRateController.dispose();
     _minPrepController.dispose();
+    _einvoiceTaxIdController.dispose();
     super.dispose();
   }
 
@@ -93,6 +97,13 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
         int.tryParse('${widget.selectedStore?['min_prep_minutes'] ?? 15}') ??
             15;
     _minPrepController.text = '$minPrep';
+
+    final einvoiceEnabledRaw = widget.selectedStore?['einvoice_enabled'];
+    _einvoiceEnabled = einvoiceEnabledRaw == true ||
+        einvoiceEnabledRaw == 1 ||
+        einvoiceEnabledRaw == '1';
+    _einvoiceTaxIdController.text =
+        widget.selectedStore?['einvoice_tax_id']?.toString() ?? '';
 
     setState(() => _loading = true);
 
@@ -249,6 +260,44 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
       _showMessage('Prep time saved.');
     } else {
       _showMessage('Failed to save prep time.', isError: true);
+    }
+  }
+
+  /// Also lives on the store record, saved the same way as tax and prep
+  /// time above.
+  Future<void> _saveEinvoice() async {
+    final store = widget.selectedStore;
+    if (store == null) return;
+
+    final taxId = _einvoiceTaxIdController.text.trim();
+
+    if (_einvoiceEnabled && taxId.isEmpty) {
+      _showMessage(
+        "Add this store's tax ID before enabling e-invoicing.",
+        isError: true,
+      );
+      return;
+    }
+
+    final response = await _auth.authorizedRequest(
+      'PUT',
+      '/stores/${store['id']}',
+      body: {
+        'name': store['name'],
+        'address': store['address'],
+        'phone': store['phone'],
+        'einvoiceEnabled': _einvoiceEnabled,
+        'einvoiceTaxId': taxId,
+      },
+    );
+
+    if (response.statusCode == 200) {
+      _showMessage('E-invoice settings saved.');
+    } else {
+      _showMessage(
+        responseErrorMessage(response, 'Failed to save e-invoice settings.'),
+        isError: true,
+      );
     }
   }
 
@@ -568,6 +617,54 @@ class _StoreHoursPanelState extends State<StoreHoursPanel> {
                   FilledButton(
                     onPressed: _saveTax,
                     child: const Text('Save tax'),
+                  ),
+                ],
+              ),
+
+              const Divider(height: 32),
+              const Text(
+                'Electronic invoice (電子發票)',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Only required if this store issues Uniform Invoices. '
+                'Businesses averaging under NT\$200,000 a month are exempt '
+                '(小規模營業人) and can leave this off. Turning it on prompts '
+                'for a buyer tax ID or a donation choice at checkout and '
+                'tracks which orders still need an invoice recorded - it '
+                "does not transmit anything to the Ministry of Finance or "
+                'a provider on its own, so record the real invoice number '
+                'here once one is issued through your own system.',
+                style: TextStyle(fontSize: 12, color: Color(0xFF77716D)),
+              ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _einvoiceEnabled,
+                onChanged: (value) => setState(() => _einvoiceEnabled = value),
+                title: const Text('Issue electronic invoices for this store'),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  SizedBox(
+                    width: 220,
+                    child: TextField(
+                      controller: _einvoiceTaxIdController,
+                      keyboardType: TextInputType.number,
+                      maxLength: 8,
+                      decoration: const InputDecoration(
+                        labelText: 'Store tax ID (統一編號, 8 digits)',
+                        border: OutlineInputBorder(),
+                        counterText: '',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  FilledButton(
+                    onPressed: _saveEinvoice,
+                    child: const Text('Save e-invoice settings'),
                   ),
                 ],
               ),

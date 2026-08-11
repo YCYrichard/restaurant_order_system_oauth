@@ -10,6 +10,7 @@ const couponsRepository = require('../repositories/coupons.repository');
 const couponsService = require('./coupons.service');
 const loyaltyRepository = require('../repositories/loyalty.repository');
 const loyaltyService = require('./loyalty.service');
+const einvoiceService = require('./einvoice.service');
 const paymentsService = require('./payments.service');
 const eventsService = require('./events.service');
 const notificationsService = require('./notifications.service');
@@ -309,6 +310,8 @@ async function createOrder(input) {
     tableNumber,
     couponCode,
     redeemPoints,
+    einvoiceBuyerTaxId,
+    einvoiceDonate,
   } = input;
 
   // Enforced here rather than only in the UI - otherwise the rule is
@@ -433,6 +436,15 @@ async function createOrder(input) {
       }
     );
 
+    // Resolved from the store's own setting, not trusted from the client -
+    // a store that hasn't opted into e-invoicing never gets 'pending' here
+    // regardless of what a request sends.
+    const einvoice = einvoiceService.resolveBuyerInput({
+      storeEinvoiceEnabled: store.einvoice_enabled,
+      buyerTaxId: einvoiceBuyerTaxId,
+      donate: einvoiceDonate,
+    });
+
     orderId = await ordersRepository.insertOrder(
       {
         userId,
@@ -446,6 +458,9 @@ async function createOrder(input) {
         couponCode: appliedCoupon ? appliedCoupon.code : null,
         pointsRedeemed,
         pointsDiscountAmount,
+        einvoiceStatus: einvoice.status,
+        einvoiceBuyerTaxId: einvoice.buyerTaxId,
+        einvoiceDonate: einvoice.donate,
         customerName,
         customerPhone,
         customerEmail,
@@ -767,6 +782,56 @@ async function refundOrder(orderId, user, { amount, reason }) {
   return getReceipt(orderId, user);
 }
 
+/// Records the real invoice number staff obtained through the store's own
+/// MOF-registered invoicing system - this does not issue one itself (see
+/// einvoice.service.js). A plain status guard is enough here, unlike
+/// refund/payment: this is a one-person bookkeeping action with no money
+/// math to race, not worth a row-locked transaction over.
+async function issueEinvoice(orderId, user, { einvoiceNumber }) {
+  const { order, accessRole } = await resolveOrderAccess(orderId, user);
+
+  if (!isOwnerTier(accessRole)) {
+    throw new OrderAccessDeniedError(
+      'Recording an invoice requires owner or manager access to this store'
+    );
+  }
+
+  if (order.einvoice_status !== 'pending') {
+    throw new OrderValidationError(
+      `Cannot issue an invoice for an order in '${order.einvoice_status}' status`
+    );
+  }
+
+  const normalized = einvoiceService.normalizeInvoiceNumber(einvoiceNumber);
+
+  await ordersRepository.setEinvoiceIssued(orderId, normalized);
+
+  return getReceipt(orderId, user);
+}
+
+/// Voids a previously-recorded invoice, e.g. after a cancelled order or a
+/// data-entry mistake - a status flag here, not the formal 作廢 process a
+/// real MOF-registered system would require for an invoice already reported.
+async function voidEinvoice(orderId, user) {
+  const { order, accessRole } = await resolveOrderAccess(orderId, user);
+
+  if (!isOwnerTier(accessRole)) {
+    throw new OrderAccessDeniedError(
+      'Voiding an invoice requires owner or manager access to this store'
+    );
+  }
+
+  if (!['pending', 'issued'].includes(order.einvoice_status)) {
+    throw new OrderValidationError(
+      `Cannot void an invoice in '${order.einvoice_status}' status`
+    );
+  }
+
+  await ordersRepository.setEinvoiceVoid(orderId);
+
+  return getReceipt(orderId, user);
+}
+
 async function listOrdersForStore(storeId, user, { activeOnly = false } = {}) {
   if (user.role !== 'admin') {
     const hasAccess = await ordersRepository.hasStoreAccess(
@@ -794,4 +859,6 @@ module.exports = {
   listOrdersForStore,
   getReceipt,
   refundOrder,
+  issueEinvoice,
+  voidEinvoice,
 };

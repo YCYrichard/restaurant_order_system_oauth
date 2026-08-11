@@ -154,6 +154,119 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
     await _load();
   }
 
+  Future<void> _issueEinvoice() async {
+    final numberController = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Record the invoice number'),
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: numberController,
+                autofocus: true,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(
+                  labelText: 'Invoice number (e.g. AB12345678)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'This records a number already issued through your own '
+                'MOF-registered invoicing system - nothing is transmitted '
+                'to the government from here.',
+                style: TextStyle(fontSize: 12, color: Color(0xFF77716D)),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Record'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final response = await widget.auth.authorizedRequest(
+      'PATCH',
+      '/orders/${widget.orderId}/einvoice',
+      body: {'einvoiceNumber': numberController.text.trim()},
+    );
+
+    if (!mounted) return;
+
+    if (response.statusCode != 200) {
+      final decoded = jsonDecode(response.body);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            decoded is Map && decoded['message'] != null
+                ? decoded['message'].toString()
+                : 'Could not record the invoice number.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    await _load();
+  }
+
+  Future<void> _voidEinvoice() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Void this invoice?'),
+        content: const Text(
+          'This only clears the status on this order - if the invoice was '
+          'already reported through your real invoicing system, void it '
+          'there too (作廢), following its own process.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Void'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final response = await widget.auth.authorizedRequest(
+      'POST',
+      '/orders/${widget.orderId}/einvoice/void',
+    );
+
+    if (!mounted) return;
+
+    if (response.statusCode != 200) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not void the invoice.')),
+      );
+      return;
+    }
+
+    await _load();
+  }
+
   void _print() => web.window.print();
 
   @override
@@ -172,8 +285,19 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                 : SingleChildScrollView(child: _buildBody()),
       ),
       actions: [
-        if (widget.allowRefund && _receipt != null)
+        if (widget.allowRefund && _receipt != null) ...[
+          if (_receipt!['order']['einvoice_status'] == 'pending')
+            TextButton(
+              onPressed: _issueEinvoice,
+              child: const Text('Issue Invoice'),
+            ),
+          if (_receipt!['order']['einvoice_status'] == 'issued')
+            TextButton(
+              onPressed: _voidEinvoice,
+              child: const Text('Void Invoice'),
+            ),
           TextButton(onPressed: _refund, child: const Text('Refund')),
+        ],
         if (_receipt != null)
           TextButton(onPressed: _print, child: const Text('Print')),
         TextButton(
@@ -223,6 +347,29 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
               fontSize: 12,
               fontWeight: FontWeight.w700,
               color: Colors.deepOrange,
+            ),
+          ),
+        if (order['einvoice_status'] != null &&
+            order['einvoice_status'] != 'not_applicable')
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              switch (order['einvoice_status']) {
+                'issued' => 'Invoice ${order['einvoice_number']} issued',
+                'void' => 'Invoice voided',
+                _ => order['einvoice_donate'] == true
+                    ? 'Invoice pending - donated to charity'
+                    : order['einvoice_buyer_tax_id'] != null
+                        ? 'Invoice pending - tax ID ${order['einvoice_buyer_tax_id']}'
+                        : 'Invoice pending',
+              },
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: order['einvoice_status'] == 'issued'
+                    ? Colors.green.shade800
+                    : Colors.deepOrange,
+              ),
             ),
           ),
         const Divider(height: 20),

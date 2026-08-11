@@ -9,9 +9,10 @@ async function insertOrder(order, connection = db) {
         tax_inclusive, discount_amount, coupon_code,
         points_redeemed, points_discount_amount,
         customer_name, customer_phone, customer_email, notes,
-        fulfillment_type, delivery_address, table_number, desired_ready_at
+        fulfillment_type, delivery_address, table_number, desired_ready_at,
+        einvoice_status, einvoice_buyer_tax_id, einvoice_donate
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       order.userId || null,
@@ -33,6 +34,9 @@ async function insertOrder(order, connection = db) {
       order.deliveryAddress || null,
       order.tableNumber || null,
       order.desiredReadyAt || null,
+      order.einvoiceStatus || 'not_applicable',
+      order.einvoiceBuyerTaxId || null,
+      order.einvoiceDonate ? 1 : 0,
     ]
   );
 
@@ -174,6 +178,34 @@ async function setPointsEarned(orderId, points, connection = db) {
     `,
     [points, orderId]
   );
+}
+
+async function setEinvoiceIssued(orderId, einvoiceNumber, connection = db) {
+  const [result] = await connection.execute(
+    `
+      UPDATE orders
+      SET einvoice_status = 'issued',
+          einvoice_number = ?,
+          einvoice_issued_at = NOW()
+      WHERE id = ?
+    `,
+    [einvoiceNumber, orderId]
+  );
+
+  return result.affectedRows > 0;
+}
+
+async function setEinvoiceVoid(orderId, connection = db) {
+  const [result] = await connection.execute(
+    `
+      UPDATE orders
+      SET einvoice_status = 'void'
+      WHERE id = ?
+    `,
+    [orderId]
+  );
+
+  return result.affectedRows > 0;
 }
 
 // activeOnly excludes completed/cancelled orders. The kitchen display
@@ -319,5 +351,7 @@ module.exports = {
   hasStoreAccess,
   updateOrderStatus,
   setPointsEarned,
+  setEinvoiceIssued,
+  setEinvoiceVoid,
   findOrdersByStore,
 };

@@ -252,6 +252,7 @@ class _OrdersPanelState extends State<OrdersPanel> {
         order['fulfillment_type']?.toString() ?? 'pickup';
     final discount =
         double.tryParse(order['discount_amount']?.toString() ?? '0') ?? 0;
+    final einvoiceStatus = order['einvoice_status']?.toString();
     final nextStatus = _nextStatus(status);
     final isTerminal = status == 'completed' || status == 'cancelled';
 
@@ -283,6 +284,13 @@ class _OrdersPanelState extends State<OrdersPanel> {
                     ),
                   ),
                 ),
+                if (einvoiceStatus == 'pending') ...[
+                  const SizedBox(width: 6),
+                  Tooltip(
+                    message: 'Invoice needs to be issued',
+                    child: Icon(Icons.receipt_long, size: 16, color: Colors.amber.shade800),
+                  ),
+                ],
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(

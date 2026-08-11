@@ -291,6 +291,16 @@ async function updateStore(storeId, fields) {
     params.push(fields.loyaltyStackableWithCoupons ? 1 : 0);
   }
 
+  if (fields.einvoiceEnabled !== undefined) {
+    assignments.push('einvoice_enabled = ?');
+    params.push(fields.einvoiceEnabled ? 1 : 0);
+  }
+
+  if (fields.einvoiceTaxId !== undefined) {
+    assignments.push('einvoice_tax_id = ?');
+    params.push(fields.einvoiceTaxId);
+  }
+
   params.push(storeId);
 
   const [result] = await db.execute(

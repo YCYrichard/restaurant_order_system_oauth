@@ -47,6 +47,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   final _emailController = TextEditingController();
   final _notesController = TextEditingController();
   final _couponController = TextEditingController();
+  final _einvoiceTaxIdController = TextEditingController();
 
   bool _isSubmitting = false;
   String? _orderId;
@@ -75,6 +76,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
   double _loyaltyPointValue = 0.01;
   int _pointsBalance = 0;
   bool _redeemPoints = false;
+
+  bool _einvoiceEnabled = false;
+  bool _einvoiceDonate = false;
 
   @override
   void initState() {
@@ -135,6 +139,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _emailController.dispose();
     _notesController.dispose();
     _couponController.dispose();
+    _einvoiceTaxIdController.dispose();
     super.dispose();
   }
 
@@ -183,6 +188,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
           loyaltyEnabledRaw == '1';
       _loyaltyPointValue =
           double.tryParse('${store?['loyalty_point_value'] ?? 0.01}') ?? 0.01;
+
+      final einvoiceEnabledRaw = store?['einvoice_enabled'];
+      _einvoiceEnabled = einvoiceEnabledRaw == true ||
+          einvoiceEnabledRaw == 1 ||
+          einvoiceEnabledRaw == '1';
 
       final products = await MenuRepository.fetchProducts(storeId);
 
@@ -359,6 +369,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
       // resolves exactly how many points apply (cap-and-apply, up to the
       // order balance), so there's nothing here a client could inflate.
       'redeemPoints': _redeemPoints,
+      // Server ignores both unless the store has e-invoicing enabled - see
+      // einvoice.service.js#resolveBuyerInput.
+      'einvoiceBuyerTaxId': _einvoiceTaxIdController.text.trim().isEmpty
+          ? null
+          : _einvoiceTaxIdController.text.trim(),
+      'einvoiceDonate': _einvoiceDonate,
     };
 
     try {
@@ -690,6 +706,37 @@ class _CheckoutPageState extends State<CheckoutPage> {
                         ),
                       ),
                     ],
+                    if (_einvoiceEnabled) ...[
+                      const SizedBox(height: 20),
+                      const Text(
+                        'Electronic Invoice (電子發票)',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        "Leave blank for a personal invoice, or fill in your "
+                        "company's tax ID to claim it as a business expense.",
+                        style: TextStyle(fontSize: 12, color: Color(0xFF77716D)),
+                      ),
+                      const SizedBox(height: 8),
+                      _ContactField(
+                        controller: _einvoiceTaxIdController,
+                        label: 'Company tax ID (統編, optional)',
+                        icon: Icons.receipt_outlined,
+                        keyboardType: TextInputType.number,
+                        enabled: !_einvoiceDonate,
+                      ),
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        value: _einvoiceDonate,
+                        onChanged: (value) => setState(() {
+                          _einvoiceDonate = value ?? false;
+                          if (_einvoiceDonate) _einvoiceTaxIdController.clear();
+                        }),
+                        title: const Text('Donate this invoice to charity'),
+                      ),
+                    ],
                     if (_paymentConfig.isCard) ...[
                       const SizedBox(height: 28),
                       const Text(
@@ -773,6 +820,7 @@ class _ContactField extends StatelessWidget {
   final IconData icon;
   final TextInputType keyboardType;
   final int maxLines;
+  final bool enabled;
   final String? Function(String?)? validator;
 
   const _ContactField({
@@ -781,6 +829,7 @@ class _ContactField extends StatelessWidget {
     required this.icon,
     this.keyboardType = TextInputType.text,
     this.maxLines = 1,
+    this.enabled = true,
     this.validator,
   });
 
@@ -790,6 +839,7 @@ class _ContactField extends StatelessWidget {
       controller: controller,
       keyboardType: keyboardType,
       maxLines: maxLines,
+      enabled: enabled,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon),

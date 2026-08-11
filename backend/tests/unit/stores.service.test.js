@@ -54,6 +54,52 @@ describe('stores.service.updateStore minPrepMinutes', () => {
   });
 });
 
+describe('stores.service.updateStore einvoice settings', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storesRepository.updateStore.mockResolvedValue(true);
+    storesRepository.findStoreById.mockResolvedValue(store);
+  });
+
+  test('passes a valid einvoiceEnabled/einvoiceTaxId through', async () => {
+    await storesService.updateStore(1, {
+      name: 'Demo Store',
+      einvoiceEnabled: true,
+      einvoiceTaxId: '12345678',
+    });
+
+    expect(storesRepository.updateStore).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ einvoiceEnabled: true, einvoiceTaxId: '12345678' })
+    );
+  });
+
+  test('leaves einvoice settings untouched when omitted', async () => {
+    await storesService.updateStore(1, { name: 'Demo Store' });
+
+    const passedFields = storesRepository.updateStore.mock.calls[0][1];
+    expect(passedFields).not.toHaveProperty('einvoiceEnabled');
+    expect(passedFields).not.toHaveProperty('einvoiceTaxId');
+  });
+
+  test('rejects a tax ID that is not exactly 8 digits', async () => {
+    await expect(
+      storesService.updateStore(1, { name: 'Demo Store', einvoiceTaxId: '123' })
+    ).rejects.toThrow(storesService.StoreValidationError);
+
+    expect(storesRepository.updateStore).not.toHaveBeenCalled();
+  });
+
+  test('clears the tax ID with an empty string', async () => {
+    await storesService.updateStore(1, { name: 'Demo Store', einvoiceTaxId: '' });
+
+    expect(storesRepository.updateStore).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ einvoiceTaxId: null })
+    );
+  });
+});
+
 describe('stores.service.getPickupSlots', () => {
   beforeEach(() => {
     jest.clearAllMocks();

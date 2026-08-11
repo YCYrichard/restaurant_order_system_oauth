@@ -41,4 +41,9 @@ router.patch('/:orderId/status', requireAuth, controller.updateOrderStatus);
 router.get('/:orderId/receipt', requireAuth, controller.getReceipt);
 router.post('/:orderId/refunds', requireAuth, controller.refundOrder);
 
+// Access for both is verified inside the service (resolveOrderAccess +
+// isOwnerTier), same reasoning as status/refunds above.
+router.patch('/:orderId/einvoice', requireAuth, controller.issueEinvoice);
+router.post('/:orderId/einvoice/void', requireAuth, controller.voidEinvoice);
+
 module.exports = router;
